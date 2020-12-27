@@ -9,7 +9,7 @@ set(CMAKE_CXX_COMPILER g++)
 
 # need CXX here so that mpi finds the correct stuff
 project(cuda_blob CUDA CXX)
-set(CMAKE_CUDA_STANDARD 14)
+set(CMAKE_CUDA_STANDARD 17)
 
 find_package(MPI REQUIRED)
 find_package(CUDAToolkit REQUIRED)

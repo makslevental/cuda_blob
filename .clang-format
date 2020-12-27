@@ -1,0 +1,17 @@
+BinPackArguments: false
+BinPackParameters: false
+ExperimentalAutoDetectBinPacking: false
+AllowAllParametersOfDeclarationOnNextLine: false
+
+AlignTrailingComments: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortLoopsOnASingleLine: true
+BreakBeforeBinaryOperators: None
+IndentWidth: 4
+SortIncludes: true
+NamespaceIndentation: All
+ColumnLimit: 80
+
+DerivePointerAlignment: false
+PointerAlignment: Left

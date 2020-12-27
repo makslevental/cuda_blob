@@ -10,7 +10,7 @@
 #include <opencv2/opencv.hpp>
 #include <mpi.h>
 
-std::ifstream OpenFile(const std::string& myFile) {
+std::ifstream openFile(const std::string& myFile) {
     std::ifstream file(myFile, std::ios::in);
     if (!file) {
         std::cerr << "Can't open file " + myFile + "!" << std::endl;

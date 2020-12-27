@@ -962,6 +962,8 @@ inline bool checkCudaCapabilities(int major_version, int minor_version) {
 }
 #endif
 
+
+
 // end of CUDA Helper Functions
 
 #endif  // COMMON_HELPER_CUDA_H_
