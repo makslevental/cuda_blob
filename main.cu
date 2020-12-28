@@ -9,6 +9,15 @@
 
 #define DEBUG 0
 
+#define CUDA_TIME(stmtsLambda)                                                                     \
+    checkCudaErrors(cudaDeviceSynchronize());                                                      \
+    cudaEventRecord(start);                                                                        \
+    stmtsLambda();                                                                                 \
+    cudaEventRecord(stop);                                                                         \
+    milliseconds = 0;                                                                              \
+    checkCudaErrors(cudaDeviceSynchronize());                                                      \
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
 __global__ void componentwiseMatrixMul1vsBatchfloat2(float2* singleIn,
                                                      float2* batchIn,
                                                      float2* out,
@@ -87,37 +96,40 @@ int main() {
         return 1;
     }
     img_cv.convertTo(img_cv, CV_32FC1);
-    cv::resize(img_cv, img_cv, cv::Size(8192, 8192));
+        cv::resize(img_cv, img_cv, cv::Size(8192, 8192));
+//    cv::resize(img_cv, img_cv, cv::Size(1024, 1024));
     auto img_width = img_cv.cols;
     auto img_height = img_cv.rows;
-    auto batch_size = 15;
+    auto batch_size = 10;
     printf("width %d, height %d\n", img_width, img_height);
     assert(img_cv.channels() == 1);
 
     cudaEvent_t start, stop;
+    float milliseconds = 0;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    checkCudaErrors(cudaDeviceSynchronize());
-    cudaEventRecord(start);
-
     /* - - - Building the Kernel with 0-padding to the size of the image - - - */
+
     auto kernel_h = new float[batch_size * img_height * img_width];
     std::fill(kernel_h, kernel_h + batch_size * img_height * img_width, 0);
     int y, x;
     int zz_yy_xx;
-    for (int k = 0; k < batch_size; k++) {
-        auto radius = k;
-        auto kernel = gaussianKernel(2 * radius + 1);
-        for (int i = ((img_height / 2) - radius); i <= ((img_height / 2) + radius); i++) {
-            for (int j = ((img_width / 2) - radius); j <= ((img_width / 2) + radius); j++) {
-                y = i - ((img_height / 2) - radius);
-                x = j - ((img_width / 2) - radius);
-                zz_yy_xx = k * (img_height * img_width) + i * img_width + j;
-                kernel_h[zz_yy_xx] = kernel[y][x];
+    CUDA_TIME([&]() {
+        for (int k = 0; k < batch_size; k++) {
+            auto radius = k;
+            auto kernel = gaussianKernel(2 * radius + 1);
+            for (int i = ((img_height / 2) - radius); i <= ((img_height / 2) + radius); i++) {
+                for (int j = ((img_width / 2) - radius); j <= ((img_width / 2) + radius); j++) {
+                    y = i - ((img_height / 2) - radius);
+                    x = j - ((img_width / 2) - radius);
+                    zz_yy_xx = k * (img_height * img_width) + i * img_width + j;
+                    kernel_h[zz_yy_xx] = kernel[y][x];
+                }
             }
         }
-    }
+    })
+    printf("kernel creation running time %.10f\n", milliseconds);
 #if DEBUG
     printf("kernel before \n");
     for (int k = 0; k < batch_size; k++) {
@@ -148,13 +160,27 @@ int main() {
     }
 #endif
 
-    checkCudaErrors(cufftPlan2d(&img_forward_plan, img_width, img_height, CUFFT_R2C));
-    checkCudaErrors(cufftPlan2d(&img_inverse_plan, img_width, img_height, CUFFT_C2R));
-    checkCudaErrors(cudaMalloc(&img_d, sizeof(float) * img_height * img_width));
-    checkCudaErrors(cudaMalloc(&img_freqs_d, sizeof(float2) * img_height * (img_width / 2 + 1)));
-    checkCudaErrors(
-        cudaMemcpy(img_d, img_h, sizeof(float) * img_height * img_width, cudaMemcpyHostToDevice));
-    checkCudaErrors(cufftExecR2C(img_forward_plan, img_d, img_freqs_d));
+    // First call to cufftPlanMany causes libcufft.so to be loaded.
+    // https://stackoverflow.com/a/33820267
+    CUDA_TIME([&]() {
+        checkCudaErrors(cufftPlan2d(&img_forward_plan, img_width, img_height, CUFFT_R2C));
+    })
+    printf("plan forward creation running time %.10f\n", milliseconds);
+    CUDA_TIME([&]() {
+        checkCudaErrors(cufftPlan2d(&img_inverse_plan, img_width, img_height, CUFFT_C2R));
+    })
+    printf("plan inverse creation running time %.10f\n", milliseconds);
+
+    CUDA_TIME([&]() {
+        checkCudaErrors(cudaMalloc(&img_d, sizeof(float) * img_height * img_width));
+        checkCudaErrors(
+            cudaMalloc(&img_freqs_d, sizeof(float2) * img_height * (img_width / 2 + 1)));
+        checkCudaErrors(cudaMemcpyAsync(
+            img_d, img_h, sizeof(float) * img_height * img_width, cudaMemcpyHostToDevice));
+    })
+    printf("img malloc running time %.10f\n", milliseconds);
+    CUDA_TIME([&]() { checkCudaErrors(cufftExecR2C(img_forward_plan, img_d, img_freqs_d)); })
+    printf("img fft time %.10f\n", milliseconds);
 
 #if DEBUG
     printf("img_freqs_d\n");
@@ -196,38 +222,47 @@ int main() {
     float* kernel_d;
     float2* kernel_freqs_d;
 
-    checkCudaErrors(cufftPlanMany(&kernel_forward_plan,
-                                  rank,
-                                  n,
-                                  inembed,
-                                  istride,
-                                  idist,
-                                  onembed,
-                                  ostride,
-                                  odist,
-                                  CUFFT_R2C,
-                                  batch_size));
-    checkCudaErrors(cufftPlanMany(&kernel_inverse_plan,
-                                  rank,
-                                  n,
-                                  onembed,
-                                  ostride,
-                                  odist,
-                                  inembed,
-                                  istride,
-                                  idist,
-                                  CUFFT_C2R,
-                                  batch_size));
+    CUDA_TIME([&]() {
+        checkCudaErrors(cufftPlanMany(&kernel_forward_plan,
+                                      rank,
+                                      n,
+                                      inembed,
+                                      istride,
+                                      idist,
+                                      onembed,
+                                      ostride,
+                                      odist,
+                                      CUFFT_R2C,
+                                      batch_size));
+        checkCudaErrors(cufftPlanMany(&kernel_inverse_plan,
+                                      rank,
+                                      n,
+                                      onembed,
+                                      ostride,
+                                      odist,
+                                      inembed,
+                                      istride,
+                                      idist,
+                                      CUFFT_C2R,
+                                      batch_size));
+    })
+    printf("kernel fft plan creation time %.10f\n", milliseconds);
 
-    checkCudaErrors(cudaMalloc(&kernel_d, sizeof(float) * img_height * img_width * batch_size));
-    checkCudaErrors(cudaMemcpy(kernel_d,
-                               kernel_h,
-                               sizeof(float) * img_height * img_width * batch_size,
-                               cudaMemcpyHostToDevice));
+    CUDA_TIME([&]() {
+        checkCudaErrors(cudaMalloc(&kernel_d, sizeof(float) * img_height * img_width * batch_size));
+        checkCudaErrors(cudaMemcpyAsync(kernel_d,
+                                        kernel_h,
+                                        sizeof(float) * img_height * img_width * batch_size,
+                                        cudaMemcpyHostToDevice));
 
-    checkCudaErrors(cudaMalloc(&kernel_freqs_d,
-                               sizeof(float2) * img_height * (img_width / 2 + 1) * batch_size));
-    checkCudaErrors(cufftExecR2C(kernel_forward_plan, kernel_d, kernel_freqs_d));
+        checkCudaErrors(cudaMalloc(&kernel_freqs_d,
+                                   sizeof(float2) * img_height * (img_width / 2 + 1) * batch_size));
+    })
+    printf("kernel malloc running time %.10f\n", milliseconds);
+
+    CUDA_TIME(
+        [&]() { checkCudaErrors(cufftExecR2C(kernel_forward_plan, kernel_d, kernel_freqs_d)); })
+    printf("kernel fft running time %.10f\n", milliseconds);
     checkCudaErrors(cudaGetLastError());
 
 #if DEBUG
@@ -273,15 +308,17 @@ int main() {
         cudaMalloc(&filtered_d, sizeof(float2) * batch_size * (img_width / 2 + 1) * img_height));
 
     /* element-wise matrix-mul */
+    checkCudaErrors(cudaDeviceSynchronize());
+    cudaEventRecord(start);
+
     componentwiseMatrixMul1vsBatchfloat2<<<dim_grid, dim_block>>>(
         img_freqs_d, kernel_freqs_d, filtered_d, batch_size, (img_width / 2 + 1), img_height);
     checkCudaErrors(cudaGetLastError());
-
     cudaEventRecord(stop);
-    float milliseconds = 0;
+    milliseconds = 0;
     checkCudaErrors(cudaDeviceSynchronize());
     cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("copy running time %.10f\n", milliseconds);
+    printf("component wise running time %.10f\n", milliseconds);
 
 #if DEBUG
     checkCudaErrors(cudaDeviceSynchronize());
