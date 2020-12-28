@@ -5,7 +5,7 @@ set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
 set(CMAKE_CUDA_HOST_COMPILER g++)
 set(CMAKE_CXX_COMPILER g++)
 
-#set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_BUILD_TYPE Debug)
 
 # need CXX here so that mpi finds the correct stuff
 project(cuda_blob CUDA CXX)
@@ -16,12 +16,13 @@ find_package(CUDAToolkit REQUIRED)
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 include_directories(${CUDAToolkit_INCLUDE_DIRS})
+include_directories(include)
 
-add_executable(cuda_blob main.cu stacktrace.h prettyprint.h cutil_inline_runtime.h helper_cuda.h helper_string.h util.h)
+add_executable(cuda_blob main.cu src/multigpu.cu)
 set_target_properties(
-    cuda_blob
-    PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES 70-real
+        cuda_blob
+        PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_ARCHITECTURES 70-real
 )
 target_link_libraries(cuda_blob ${OpenCV_LIBS} CUDA::cufft)

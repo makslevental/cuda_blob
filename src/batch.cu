@@ -1,9 +1,14 @@
+//
+// Created by Maksim Levental on 12/28/20.
+//
+
 #include <cassert>
 #include <cufft.h>
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #include <tiffio.h>
 
+#include "batch.cuh"
 #include "helper_cuda.h"
 #include "stacktrace.h"
 
@@ -77,7 +82,7 @@ float** gaussianKernel(int width = 21, float sigma = 3.0) {
     return kernel;
 }
 
-int main() {
+int runBatch() {
     /* - - - load image using OpenCV - - - */
     auto fp = "/home/max/dev_projects/cuda_blob/data/S_000_1752450056/"
               "Tile_r1-c1_S_000_1752450056.tif";
@@ -288,4 +293,6 @@ int main() {
     printf("filtered_d\n");
     printDevice3Dfloat2(filtered_d, batch_size, (img_width / 2 + 1), img_height);
 #endif
+
+    return 0;
 }
