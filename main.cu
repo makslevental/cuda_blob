@@ -88,8 +88,6 @@ int main() {
     }
     img_cv.convertTo(img_cv, CV_32FC1);
     cv::resize(img_cv, img_cv, cv::Size(8192, 8192));
-    //    cv::resize(img_cv, img_cv, cv::Size(8192, 8192));
-    //    cv::resize(img_cv, img_cv, cv::Size(1024, 1024));
     auto img_width = img_cv.cols;
     auto img_height = img_cv.rows;
     auto batch_size = 15;
@@ -157,7 +155,6 @@ int main() {
     checkCudaErrors(
         cudaMemcpy(img_d, img_h, sizeof(float) * img_height * img_width, cudaMemcpyHostToDevice));
     checkCudaErrors(cufftExecR2C(img_forward_plan, img_d, img_freqs_d));
-    checkCudaErrors(cudaGetLastError());
 
 #if DEBUG
     printf("img_freqs_d\n");
@@ -263,7 +260,6 @@ int main() {
     //    }
     //#endif
 
-    checkCudaErrors(cudaDeviceSynchronize());
     auto num_threads = 32;
     dim3 dim_block(num_threads, num_threads);
     int n_blocks_w = (img_width / 2 + 1) / num_threads;
@@ -281,13 +277,10 @@ int main() {
         img_freqs_d, kernel_freqs_d, filtered_d, batch_size, (img_width / 2 + 1), img_height);
     checkCudaErrors(cudaGetLastError());
 
-    checkCudaErrors(cudaDeviceSynchronize());
     cudaEventRecord(stop);
-    checkCudaErrors(cudaDeviceSynchronize());
     float milliseconds = 0;
     checkCudaErrors(cudaDeviceSynchronize());
     cudaEventElapsedTime(&milliseconds, start, stop);
-    checkCudaErrors(cudaDeviceSynchronize());
     printf("copy running time %.10f\n", milliseconds);
 
 #if DEBUG
