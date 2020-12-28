@@ -11,7 +11,11 @@ BreakBeforeBinaryOperators: None
 IndentWidth: 4
 SortIncludes: true
 NamespaceIndentation: All
-ColumnLimit: 80
+ColumnLimit: 100
+IndentPPDirectives: BeforeHash
 
 DerivePointerAlignment: false
 PointerAlignment: Left
+
+AlignConsecutiveMacros: true
+AlignEscapedNewlines: Right

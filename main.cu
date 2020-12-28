@@ -1,377 +1,52 @@
 #include <cassert>
 #include <cufft.h>
 #include <iostream>
-#include <memory>
 #include <opencv2/opencv.hpp>
 #include <tiffio.h>
 
 #include "helper_cuda.h"
 #include "stacktrace.h"
-#include "util.h"
 
-//__global__ void
-// KernelFFTShift2D(cufftDoubleComplex* IM, int im_height, int im_width);
-//
-//__global__ void ComponentwiseMatrixMul(cufftDoubleComplex* in1,
-//                                       cufftDoubleComplex* in2,
-//                                       cufftDoubleComplex* out,
-//                                       int row,
-//                                       int col);
-//
-//__global__ void ZeroPadding(cufftDoubleComplex* F,
-//                            cufftDoubleComplex* FP,
-//                            int newCols,
-//                            int newRows,
-//                            int oldCols,
-//                            int oldRows);
-//
-//__global__ void ZeroPadding(cufftDoubleComplex* F,
-//                            cufftDoubleComplex* FP,
-//                            int newCols,
-//                            int newRows,
-//                            int oldCols,
-//                            int oldRows) {
-//    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-//    int idy = blockIdx.y * blockDim.y + threadIdx.y;
-//    int ind = idx * newCols + idy;
-//
-//    if (idx < newRows && idy < newCols) {
-//        if (idx < oldRows && idy < oldCols) {
-//            FP[ind].x = F[idx * oldCols + idy].x;
-//        } else if (idx > oldRows || idy > oldCols) {
-//            FP[ind].x = 0;
-//        }
-//    }
-//}
-//
-//__global__ void ComponentwiseMatrixMul(cufftDoubleComplex* in1,
-//                                       cufftDoubleComplex* in2,
-//                                       cufftDoubleComplex* out,
-//                                       int row,
-//                                       int col) {
-//    int indexRow = threadIdx.x + blockIdx.x * blockDim.x;
-//    int indexCol = threadIdx.y + blockIdx.y * blockDim.y;
-//    if (indexRow < row && indexCol < col) {
-//        out[indexRow * col + indexCol].x =
-//            in1[indexRow * col + indexCol].x * in2[indexRow * col +
-//            indexCol].x;
-//        out[indexRow * col + indexCol].y =
-//            in1[indexRow * col + indexCol].y * in2[indexRow * col +
-//            indexCol].y;
-//    }
-//}
-//
-//__global__ void
-// KernelFFTShift2D(cufftDoubleComplex* IM, int im_height, int im_width) {
-//    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-//    int idy = blockIdx.y * blockDim.y + threadIdx.y;
-//    int ind = idy * im_width + idx;
-//    int x, y, indshift;
-//    cufftDoubleComplex v;
-//
-//    if (idx < im_width && idy < im_height / 2) {
-//        if (idx < im_width / 2 && idy < im_height / 2) {
-//            x = idx + im_width / 2;
-//            y = idy + im_height / 2;
-//        } else if (idx >= im_width / 2 && idy < im_height / 2) {
-//            x = idx - im_width / 2;
-//            y = idy + im_height / 2;
-//        }
-//
-//        indshift = y * im_width + x;
-//        v.x = IM[ind].x;
-//        v.y = IM[ind].y;
-//
-//        IM[ind].x = IM[indshift].x;
-//        IM[ind].y = IM[indshift].y;
-//
-//        IM[indshift].x = v.x;
-//        IM[indshift].y = v.y;
-//    }
-//}
-//
-// int main(int argc, char* argv[]) {
-//    auto fp = "/home/max/dev_projects/cuda_blob/data/S_000_1752450056/"
-//              "Tile_r1-c1_S_000_1752450056.tif";
-//    cv::Mat cv_img = imread(fp, cv::IMREAD_GRAYSCALE);
-//    if (cv_img.empty()) {
-//        std::cout << "Could not read the image: " << fp << std::endl;
-//        return 1;
-//    }
-//    cv::resize(cv_img, cv_img, cv::Size(8092, 8092));
-//
-//    auto im_width = cv_img.cols;
-//    auto im_height = cv_img.rows;
-//    auto batch_size = 10;
-//    printf("width %d, height %d", im_width, im_height);
-//    auto im_channels = cv_img.channels();
-//    assert(im_channels == 1);
-//
-//    auto cufft_img = new cufftDoubleComplex**[batch_size];
-//    for (int k = 0; k < batch_size; k++) {
-//        cufft_img[k] = new cufftDoubleComplex*[im_height];
-//        for (int i = 0; i < im_height; i++) {
-//            cufft_img[k][i] = new cufftDoubleComplex[im_width];
-//            for (int j = 0; j < im_width; j++) {
-//                cufft_img[k][i][j].x = (double)cv_img.at<uchar>(j, i);
-//                cufft_img[k][i][j].y = 0;
-//            }
-//        }
-//    }
-//
-//    auto kernel_file =
-//        openFile("/home/max/dev_projects/cuda_blob/Kernel51.txt");
-//
-//    /* - - - Building the Kernel with 0-padding - - - */
-//    auto cufft_padded_kernel = new cufftDoubleComplex**[batch_size];
-//    for (int k = 0; k < batch_size; k++) {
-//        cufft_padded_kernel[k] = new cufftDoubleComplex*[im_height];
-//        for (int i = 0; i < im_height; i++) {
-//            cufft_padded_kernel[k][i] = new cufftDoubleComplex[im_width];
-//            for (int j = 0; j < im_width; j++) {
-//                if ((i >= ((im_height / 2) - 2)) &&
-//                    (i <= ((im_height / 2) + 2)) &&
-//                    (j >= ((im_width / 2) - 2)) &&
-//                    (j <= ((im_width / 2) + 2))) {
-//                    assert(kernel_file >> cufft_padded_kernel[k][i][j].x);
-//                    cufft_padded_kernel[k][i][j].y = 0.0;
-//                } else {
-//                    cufft_padded_kernel[k][i][j].x = 0.0;
-//                    cufft_padded_kernel[k][i][j].y = 0.0;
-//                }
-//            }
-//        }
-//    }
-//
-//    cufftDoubleComplex* cufft_img_d;
-//    cufftDoubleComplex* cufft_padded_kernel_d;
-//    cufftDoubleComplex* cufft_ffted_img_d;
-//    cufftDoubleComplex* cufft_ffted_padded_kernel_d;
-//
-//    checkCudaErrors(cudaMalloc((void**)&cufft_img_d,
-//                               batch_size * im_width * im_height *
-//                                   sizeof(cufftDoubleComplex)));
-//    checkCudaErrors(cudaMalloc((void**)&cufft_padded_kernel_d,
-//                               batch_size * im_width * im_height *
-//                                   sizeof(cufftDoubleComplex)));
-//    checkCudaErrors(cudaMalloc((void**)&cufft_ffted_img_d,
-//                               batch_size * im_width * im_height *
-//                                   sizeof(cufftDoubleComplex)));
-//    checkCudaErrors(cudaMalloc((void**)&cufft_ffted_padded_kernel_d,
-//                               batch_size * im_width * im_height *
-//                                   sizeof(cufftDoubleComplex)));
-//
-//    /* --- Copying image and cufft_padded_kernel on device --- */
-//    for (int i = 0; i < im_height; ++i) {
-//        cudaMemcpy2D(cufft_img_d + i * im_width,
-//                     sizeof(cufftDoubleComplex),
-//                     cufft_img[i],
-//                     sizeof(cufftDoubleComplex),
-//                     sizeof(cufftDoubleComplex),
-//                     im_width,
-//                     cudaMemcpyHostToDevice);
-//    }
-//
-//    for (int i = 0; i < im_height; ++i) {
-//        cudaMemcpy2D(cufft_padded_kernel_d + i * im_width,
-//                     sizeof(cufftDoubleComplex),
-//                     cufft_padded_kernel[i],
-//                     sizeof(cufftDoubleComplex),
-//                     sizeof(cufftDoubleComplex),
-//                     im_width,
-//                     cudaMemcpyHostToDevice);
-//    }
-//
-//    auto num_threads = 32;
-//    dim3 dim_block(num_threads, num_threads);
-//    int n_blocks_w = im_width / num_threads;
-//    if ((im_width % num_threads) != 0) n_blocks_w++;
-//    int n_blocks_h = im_height / num_threads;
-//    if ((im_height % num_threads) != 0) n_blocks_h++;
-//    dim3 dim_grid(n_blocks_w, n_blocks_h);
-//
-//    /* Creating plans */
-//    cufftHandle plan_img_Z2Z, plan_inv_Z2Z, plan_kernel_Z2Z;
-//    auto cufft_type = CUFFT_Z2Z;
-//    checkCudaErrors(
-//        cufftPlan2d(&plan_img_Z2Z, im_width, im_height, cufft_type));
-//    checkCudaErrors(
-//        cufftPlan2d(&plan_kernel_Z2Z, im_width, im_height, cufft_type));
-//    checkCudaErrors(
-//        cufftPlan2d(&plan_inv_Z2Z, im_width, im_height, cufft_type));
-//
-//    /* - - - Fast Fourier Transform on image - - - */
-//    checkCudaErrors(cufftExecZ2Z(
-//        plan_img_Z2Z, cufft_img_d, cufft_ffted_img_d, CUFFT_FORWARD));
-//    KernelFFTShift2D<<<dim_grid, dim_block>>>(
-//        cufft_ffted_img_d, im_height, im_width);
-//
-//    /* - - - Fast Fourier Transform on kernel - - - */
-//    checkCudaErrors(cufftExecZ2Z(plan_kernel_Z2Z,
-//                                 cufft_padded_kernel_d,
-//                                 cufft_ffted_padded_kernel_d,
-//                                 CUFFT_FORWARD));
-//    KernelFFTShift2D<<<dim_grid, dim_block>>>(
-//        cufft_ffted_padded_kernel_d, im_height, im_width);
-//
-//    /* element-wise matrix-mul */
-//    ComponentwiseMatrixMul<<<dim_grid, dim_block>>>(cufft_ffted_img_d,
-//                                                    cufft_ffted_padded_kernel_d,
-//                                                    cufft_ffted_img_d,
-//                                                    im_height,
-//                                                    im_width);
-//
-//    /* - - - Executing IFFT and shifting back - - - */
-//    KernelFFTShift2D<<<dim_grid, dim_block>>>(
-//        cufft_ffted_img_d, im_height, im_width);
-//    checkCudaErrors(cufftExecZ2Z(
-//        plan_inv_Z2Z, cufft_ffted_img_d, cufft_img_d, CUFFT_INVERSE));
-//    KernelFFTShift2D<<<dim_grid, dim_block>>>(cufft_img_d, im_height,
-//    im_width);
-//
-//    /* - - - Generating output - - - */
-//    auto c = (cufftDoubleComplex*)malloc(im_width * im_height *
-//                                         sizeof(cufftDoubleComplex));
-//    cudaMemcpy(c,
-//               cufft_img_d,
-//               sizeof(cufftDoubleComplex) * im_height * im_width,
-//               cudaMemcpyDeviceToHost);
-//
-//    long double max = c[0].x;
-//    for (int i = 0; i < im_height; i++) {
-//        for (int j = 0; j < im_width; j++) {
-//            if (c[i * im_width + j].x > max) max = c[i * im_width + j].x;
-//        }
-//    }
-//    cv_img.convertTo(cv_img, CV_64F);
-//    for (int i = 0; i < im_height; i++) {
-//        for (int j = 0; j < im_width; j++) {
-//            cv_img.at<double>(j, i) =
-//                floor((c[i * im_width + j].x / max) * 255);
-//        }
-//    }
-//    std::vector<int> compression_params;
-//    compression_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-//    compression_params.push_back(9);
-//    imwrite("/home/max/dev_projects/cuda_blob/data/output_image.jpg",
-//            cv_img,
-//            compression_params);
-//
-//    return 0;
-//}
+#define DEBUG 0
 
-//#define NRANK 2
-//#define BATCH 10
-//
-//#include "cuda_runtime.h"
-//#include "device_launch_parameters.h"
-//#include <cufft.h>
-//#include <iomanip>
-//#include <iostream>
-//#include <stdio.h>
-//#include <vector>
-//
-// using namespace std;
-//
-// const size_t NX = 4;
-// const size_t NY = 6;
-//
-// int main() {
-//    // Input array (static) - host side
-//    float h_in_data_static[NX][NY] = {
-//        {0.7943, 0.6020, 0.7482, 0.9133, 0.9961, 0.9261},
-//        {0.3112, 0.2630, 0.4505, 0.1524, 0.0782, 0.1782},
-//        {0.5285, 0.6541, 0.0838, 0.8258, 0.4427, 0.3842},
-//        {0.1656, 0.6892, 0.2290, 0.5383, 0.1067, 0.1712}};
-//
-//    // --------------------------------
-//    // Input array (dynamic) - host side
-//    float* h_in_data_dynamic = new float[NX * NY];
-//
-//    // Set the values
-//    size_t h_ipitch;
-//    for (int r = 0; r < NX; ++r) // this can be also done on GPU
-//    {
-//        for (int c = 0; c < NY; ++c) {
-//            h_in_data_dynamic[NY * r + c] = h_in_data_static[r][c];
-//        }
-//    }
-//    // --------------------------------
-//    int owidth = (NY / 2) + 1;
-//
-//    // Output array - host side
-//    float2* h_out_data_temp = new float2[NX * owidth];
-//
-//    // Input and Output array - device side
-//    cufftHandle plan;
-//    cufftReal* d_in_data;
-//    cufftComplex* d_out_data;
-//    int n[NRANK] = {NX, NY};
-//
-//    //  Copy input array from Host to Device
-//    size_t ipitch;
-//    cudaMallocPitch((void**)&d_in_data, &ipitch, NY * sizeof(cufftReal), NX);
-//    cudaMemcpy2D(d_in_data,
-//                 ipitch,
-//                 h_in_data_dynamic,
-//                 NY * sizeof(float),
-//                 NY * sizeof(float),
-//                 NX,
-//                 cudaMemcpyHostToDevice);
-//
-//    //  Allocate memory for output array - device side
-//    size_t opitch;
-//    cudaMallocPitch(
-//        (void**)&d_out_data, &opitch, owidth * sizeof(cufftComplex), NX);
-//
-//    //  Performe the fft
-//    int rank = 2;                 // 2D fft
-//    int istride = 1, ostride = 1; // Stride lengths
-//    int idist = 1, odist = 1;     // Distance between batches
-//    int inembed[] = {
-//        NX,
-//        static_cast<int>(ipitch / sizeof(cufftReal))}; // Input size with
-//        pitch
-//    int onembed[] = {
-//        NX,
-//        static_cast<int>(opitch /
-//                         sizeof(cufftComplex))}; // Output size with pitch
-//    int batch = 1;
-//    cufftPlanMany(&plan,
-//                  rank,
-//                  n,
-//                  inembed,
-//                  istride,
-//                  idist,
-//                  onembed,
-//                  ostride,
-//                  odist,
-//                  CUFFT_R2C,
-//                  batch);
-//    cufftExecR2C(plan, d_in_data, d_out_data);
-//    cudaDeviceSynchronize();
-//
-//    // Copy d_in_data back from device to host
-//    cudaMemcpy2D(h_out_data_temp,
-//                 owidth * sizeof(float2),
-//                 d_out_data,
-//                 opitch,
-//                 owidth * sizeof(cufftComplex),
-//                 NX,
-//                 cudaMemcpyDeviceToHost);
-//
-//    // Print the results
-//    for (int i = 0; i < NX; i++) {
-//        for (int j = 0; j < owidth; j++)
-//            printf(" %f + %fi",
-//                   h_out_data_temp[i * owidth + j].x,
-//                   h_out_data_temp[i * owidth + j].y);
-//        printf("\n");
-//    }
-//    cudaFree(d_in_data);
-//
-//    return 0;
-//}
+__global__ void componentwiseMatrixMul1vsBatchfloat2(float2* singleIn,
+                                                     float2* batchIn,
+                                                     float2* out,
+                                                     int batch_size,
+                                                     int rows,
+                                                     int cols) {
+    int col = threadIdx.x + blockIdx.x * blockDim.x;
+    int row = threadIdx.y + blockIdx.y * blockDim.y;
+    int batch = blockIdx.z;
+
+    auto yy_xx = row * cols + col;
+    auto zz_yy_xx = batch * (rows * cols) + yy_xx;
+
+    if (batch < batch_size && row < rows && col < cols) {
+        out[zz_yy_xx].x =
+            singleIn[yy_xx].x * batchIn[zz_yy_xx].x - singleIn[yy_xx].y * batchIn[zz_yy_xx].y;
+        out[zz_yy_xx].y =
+            singleIn[yy_xx].x * batchIn[zz_yy_xx].y + singleIn[yy_xx].y * batchIn[zz_yy_xx].x;
+    }
+}
+
+void printDevice3Dfloat2(float2* dev_ptr, int batch_size, int width, int height) {
+    float2* host_ptr = new float2[height * width * batch_size];
+    checkCudaErrors(cudaMemcpy(
+        host_ptr, dev_ptr, sizeof(float2) * height * width * batch_size, cudaMemcpyDeviceToHost));
+    for (int k = 0; k < batch_size; k++) {
+        for (int i = 0; i < height; i++) {
+            for (int j = 0; j < width; j++) {
+                printf("%f + %f i    ",
+                       host_ptr[k * (height * width) + i * width + j].x,
+                       host_ptr[k * (height * width) + i * width + j].y);
+            }
+            std::cout << "\n";
+        }
+        printf("*********************\n");
+    }
+    delete[] host_ptr;
+}
 
 float** gaussianKernel(int width = 21, float sigma = 3.0) {
     float** kernel = new float*[width];
@@ -381,8 +56,7 @@ float** gaussianKernel(int width = 21, float sigma = 3.0) {
         kernel[y] = new float[width];
         for (int x = 0; x < width; x++) {
             kernel[y][x] = (1 / (2 * M_PI * pow(sigma, 2))) *
-                           exp(-(pow(x - mean, 2) + pow(y - mean, 2)) /
-                               (2 * pow(sigma, 2)));
+                           exp(-(pow(x - mean, 2) + pow(y - mean, 2)) / (2 * pow(sigma, 2)));
             norm += kernel[y][x];
         }
     }
@@ -391,108 +65,141 @@ float** gaussianKernel(int width = 21, float sigma = 3.0) {
             kernel[y][x] /= norm;
         }
     }
-//    for (int y = 0; y < width; y++) {
-//        for (int x = 0; x < width; x++) {
-//            kernel[y][x] /= norm;
-//            printf("%f ", kernel[y][x]);
-//        }
-//        std::cout << "\n";
-//    }
+#if DEBUG
+    for (int y = 0; y < width; y++) {
+        for (int x = 0; x < width; x++) {
+            kernel[y][x] /= norm;
+            printf("%f ", kernel[y][x]);
+        }
+        std::cout << "\n";
+    }
+#endif
     return kernel;
 }
 
 int main() {
+    /* - - - load image using OpenCV - - - */
     auto fp = "/home/max/dev_projects/cuda_blob/data/S_000_1752450056/"
               "Tile_r1-c1_S_000_1752450056.tif";
-    cv::Mat cv_img = imread(fp, cv::IMREAD_GRAYSCALE);
-    if (cv_img.empty()) {
+    cv::Mat img_cv = imread(fp, cv::IMREAD_GRAYSCALE);
+    if (img_cv.empty()) {
         std::cout << "Could not read the image: " << fp << std::endl;
         return 1;
     }
-    cv::resize(cv_img, cv_img, cv::Size(8192, 8192));
-//    cv::resize(cv_img, cv_img, cv::Size(1024, 1024));
-
-    auto im_width = cv_img.cols;
-    auto im_height = cv_img.rows;
-    auto batch_size = 20;
-    printf("width %d, height %d\n", im_width, im_height);
-    auto im_channels = cv_img.channels();
-    assert(im_channels == 1);
-
-    cufftHandle forward_plan, inverse_plan;
-
-    int batch = batch_size;
-    int rank = 2;
-
-    int nRows = im_height;
-    int nCols = im_width;
-    int n[2] = {nRows, nCols};
-
-    // dist between batches
-    int idist = nRows * nCols;
-    int odist = nRows * (nCols / 2 + 1);
-
-    // input/output sizes with pitches ("unpitched")
-    int inembed[] = {nRows, nCols};
-    int onembed[] = {nRows, nCols / 2 + 1};
-
-    int istride = 1;
-    int ostride = 1;
+    img_cv.convertTo(img_cv, CV_32FC1);
+    cv::resize(img_cv, img_cv, cv::Size(8192, 8192));
+    //    cv::resize(img_cv, img_cv, cv::Size(8192, 8192));
+    //    cv::resize(img_cv, img_cv, cv::Size(1024, 1024));
+    auto img_width = img_cv.cols;
+    auto img_height = img_cv.rows;
+    auto batch_size = 15;
+    printf("width %d, height %d\n", img_width, img_height);
+    assert(img_cv.channels() == 1);
 
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    float* h_in = (float*)malloc(sizeof(float) * batch * nRows * nCols);
-
-    auto zz_yy_xx = 0;
+    checkCudaErrors(cudaDeviceSynchronize());
     cudaEventRecord(start);
+
+    /* - - - Building the Kernel with 0-padding to the size of the image - - - */
+    auto kernel_h = new float[batch_size * img_height * img_width];
+    std::fill(kernel_h, kernel_h + batch_size * img_height * img_width, 0);
+    int y, x;
+    int zz_yy_xx;
     for (int k = 0; k < batch_size; k++) {
-        for (int i = 0; i < im_height; i++) {
-            for (int j = 0; j < im_width; j++) {
-                h_in[zz_yy_xx++] = (float)cv_img.at<uchar>(j, i);
+        auto radius = k;
+        auto kernel = gaussianKernel(2 * radius + 1);
+        for (int i = ((img_height / 2) - radius); i <= ((img_height / 2) + radius); i++) {
+            for (int j = ((img_width / 2) - radius); j <= ((img_width / 2) + radius); j++) {
+                y = i - ((img_height / 2) - radius);
+                x = j - ((img_width / 2) - radius);
+                zz_yy_xx = k * (img_height * img_width) + i * img_width + j;
+                kernel_h[zz_yy_xx] = kernel[y][x];
             }
         }
     }
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    float milliseconds = 0;
-    cudaEventElapsedTime(&milliseconds, start, stop);
-    printf("copy running time %f\n", milliseconds);
-
-    /* - - - Building the Kernel with 0-padding - - - */
-    auto radius = 3;
-    auto kernel = gaussianKernel(2 * radius + 1);
-    float* k_in = (float*)malloc(sizeof(float) * batch * nRows * nCols);
+#if DEBUG
+    printf("kernel before \n");
     for (int k = 0; k < batch_size; k++) {
-        for (int i = 0; i < im_height; i++) {
-            for (int j = 0; j < im_width; j++) {
-                zz_yy_xx = k * (im_height * im_width) + i * im_width + j;
-                if ((i >= ((im_height / 2) - radius)) &&
-                    (i <= ((im_height / 2) + radius)) &&
-                    (j >= ((im_width / 2) - radius)) &&
-                    (j <= ((im_width / 2) + radius))) {
-                    auto y = i - ((im_height / 2) - radius);
-                    auto x = j - ((im_width / 2) - radius);
-                    k_in[zz_yy_xx] = kernel[y][x];
-                } else {
-                    k_in[zz_yy_xx] = 0.0f;
-                }
+        for (int i = 0; i < img_height; i++) {
+            for (int j = 0; j < img_width; j++) {
+                printf("%f    ", kernel_h[k * (img_height * img_width) + i * img_width + j]);
             }
+            std::cout << "\n";
         }
+        printf("*********************\n");
     }
-//    for (int k = 0; k < batch_size; k++) {
-//        for (int i = 0; i < im_height; i++) {
-//            for (int j = 0; j < im_width; j++) {
-//                printf("%f    ",
-//                       k_in[k * (im_height * im_width) + i * im_width + j]);
-//            }
-//            std::cout << "\n";
-//        }
-//        printf("*********************\n");
-//    }
+#endif
 
-    checkCudaErrors(cufftPlanMany(&forward_plan,
+    /* - - -  ffts - - - */
+    // img fft
+    cufftHandle img_forward_plan, img_inverse_plan;
+    float* img_h = (float*)(img_cv.isContinuous() ? img_cv.data : img_cv.clone().data);
+    float* img_d;
+    float2* img_freqs_d;
+
+#if DEBUG
+    printf("img before \n");
+    for (int i = 0; i < img_height; i++) {
+        for (int j = 0; j < img_width; j++) {
+            printf("%f    ", img_h[i * img_width + j]);
+        }
+        std::cout << "\n";
+    }
+#endif
+
+    checkCudaErrors(cufftPlan2d(&img_forward_plan, img_width, img_height, CUFFT_R2C));
+    checkCudaErrors(cufftPlan2d(&img_inverse_plan, img_width, img_height, CUFFT_C2R));
+    checkCudaErrors(cudaMalloc(&img_d, sizeof(float) * img_height * img_width));
+    checkCudaErrors(cudaMalloc(&img_freqs_d, sizeof(float2) * img_height * (img_width / 2 + 1)));
+    checkCudaErrors(
+        cudaMemcpy(img_d, img_h, sizeof(float) * img_height * img_width, cudaMemcpyHostToDevice));
+    checkCudaErrors(cufftExecR2C(img_forward_plan, img_d, img_freqs_d));
+    checkCudaErrors(cudaGetLastError());
+
+#if DEBUG
+    printf("img_freqs_d\n");
+    printDevice3Dfloat2(img_freqs_d, 1, (img_width / 2 + 1), img_height);
+#endif
+
+    // https://forums.developer.nvidia.com/t/cufft-out-of-place-transform-destroys-input/15133
+    // something weird going on here?
+    // https://github.com/google/jax/issues/2874#issuecomment-622290366
+    //#if DEBUG
+    //    checkCudaErrors(cufftExecC2R(img_inverse_plan, img_freqs_d, img_d));
+    //    checkCudaErrors(
+    //        cudaMemcpy(img_h, img_d, sizeof(float) * img_height * img_width,
+    //        cudaMemcpyDeviceToHost));
+    //    printf("img after\n");
+    //    for (int i = 0; i < img_height; i++) {
+    //        for (int j = 0; j < img_width; j++) {
+    //            printf("%f    ", (1.0 / (img_width * img_height)) * abs(img_h[i * img_width +
+    //            j]));
+    //        }
+    //        std::cout << "\n";
+    //    }
+    //#endif
+
+    // kernel batch fft
+    cufftHandle kernel_forward_plan, kernel_inverse_plan;
+    // dimension of fft
+    int rank = 2;
+    int n[2] = {img_height, img_width};
+    // dist between batches
+    int idist = img_height * img_width;
+    int odist = img_height * (img_width / 2 + 1);
+    // input/output sizes with pitches ("unpitched")
+    int inembed[] = {img_height, img_width};
+    int onembed[] = {img_height, img_width / 2 + 1};
+    // stride between adjacent entries in row
+    int istride = 1;
+    int ostride = 1;
+    float* kernel_d;
+    float2* kernel_freqs_d;
+
+    checkCudaErrors(cufftPlanMany(&kernel_forward_plan,
                                   rank,
                                   n,
                                   inembed,
@@ -502,42 +209,8 @@ int main() {
                                   ostride,
                                   odist,
                                   CUFFT_R2C,
-                                  batch));
-
-    float2* h_freq =
-        (float2*)malloc(sizeof(float2) * nRows * (nCols / 2 + 1) * batch);
-
-    float* d_in;
-    checkCudaErrors(cudaMalloc(&d_in, sizeof(float) * nRows * nCols * batch));
-    float2* d_freq;
-    checkCudaErrors(
-        cudaMalloc(&d_freq, sizeof(float2) * nRows * (nCols / 2 + 1) * batch));
-
-    checkCudaErrors(cudaMemcpy(d_in,
-                               k_in,
-                               sizeof(float) * nRows * nCols * batch,
-                               cudaMemcpyHostToDevice));
-
-    for (int i = 0; i < 10; i++) {
-        cudaEventRecord(start);
-        checkCudaErrors(cufftExecR2C(forward_plan, d_in, d_freq));
-        cudaEventRecord(stop);
-        cudaEventSynchronize(stop);
-        float milliseconds = 0;
-        cudaEventElapsedTime(&milliseconds, start, stop);
-        printf("fft running time %f\n", milliseconds);
-    }
-
-    checkCudaErrors(cudaMemcpy(h_freq,
-                               d_freq,
-                               sizeof(float2) * nRows * (nCols / 2 + 1) * batch,
-                               cudaMemcpyDeviceToHost));
-
-    //    for (int i = 0; i < nRows * (nCols / 2 + 1) * batch; i++)
-    //        printf("Direct transform: %i %f %f\n", i, h_freq[i].x,
-    //        h_freq[i].y);
-
-    checkCudaErrors(cufftPlanMany(&inverse_plan,
+                                  batch_size));
+    checkCudaErrors(cufftPlanMany(&kernel_inverse_plan,
                                   rank,
                                   n,
                                   onembed,
@@ -547,25 +220,79 @@ int main() {
                                   istride,
                                   idist,
                                   CUFFT_C2R,
-                                  batch));
+                                  batch_size));
 
-    checkCudaErrors(cufftExecC2R(inverse_plan, d_freq, d_in));
+    checkCudaErrors(cudaMalloc(&kernel_d, sizeof(float) * img_height * img_width * batch_size));
+    checkCudaErrors(cudaMemcpy(kernel_d,
+                               kernel_h,
+                               sizeof(float) * img_height * img_width * batch_size,
+                               cudaMemcpyHostToDevice));
 
-    checkCudaErrors(cudaMemcpy(k_in,
-                               d_in,
-                               sizeof(float) * nRows * nCols * batch,
-                               cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMalloc(&kernel_freqs_d,
+                               sizeof(float2) * img_height * (img_width / 2 + 1) * batch_size));
+    checkCudaErrors(cufftExecR2C(kernel_forward_plan, kernel_d, kernel_freqs_d));
+    checkCudaErrors(cudaGetLastError());
 
+#if DEBUG
+    printf("kernel_freqs_d\n");
+    printDevice3Dfloat2(kernel_freqs_d, batch_size, (img_width / 2 + 1), img_height);
+#endif
+
+    // https://forums.developer.nvidia.com/t/cufft-out-of-place-transform-destroys-input/15133
+    // something weird going on here?
+    // https://github.com/google/jax/issues/2874#issuecomment-622290366
     // CUFFT has the same behavior as FFTW, it computes unnormalized FFTs.
     // https://stackoverflow.com/a/6460822
-//    for (int k = 0; k < batch_size; k++) {
-//        for (int i = 0; i < im_height; i++) {
-//            for (int j = 0; j < im_width; j++) {
-//                printf("%f    ",
-//                       (1.0/(im_width*im_height))*abs(k_in[k * (im_height * im_width) + i * im_width + j]));
-//            }
-//            std::cout << "\n";
-//        }
-//        printf("*********************\n");
-//    }
+    //#if DEBUG
+    //    checkCudaErrors(cufftExecC2R(kernel_inverse_plan, kernel_freqs_d, kernel_d));
+    //    checkCudaErrors(cudaMemcpy(kernel_h,
+    //                               kernel_d,
+    //                               sizeof(float) * img_height * img_width * batch_size,
+    //                               cudaMemcpyDeviceToHost));
+    //    printf("kernel after \n");
+    //    for (int k = 0; k < batch_size; k++) {
+    //        for (int i = 0; i < img_height; i++) {
+    //            for (int j = 0; j < img_width; j++) {
+    //                printf("%f    ",
+    //                       (1.0 / (img_width * img_height)) *
+    //                           abs(kernel_h[k * (img_height * img_width) + i * img_width + j]));
+    //            }
+    //            std::cout << "\n";
+    //        }
+    //        printf("*********************\n");
+    //    }
+    //#endif
+
+    checkCudaErrors(cudaDeviceSynchronize());
+    auto num_threads = 32;
+    dim3 dim_block(num_threads, num_threads);
+    int n_blocks_w = (img_width / 2 + 1) / num_threads;
+    if (((img_width / 2 + 1) % num_threads) != 0) n_blocks_w++;
+    int n_blocks_h = img_height / num_threads;
+    if ((img_height % num_threads) != 0) n_blocks_h++;
+    dim3 dim_grid(n_blocks_w, n_blocks_h, batch_size);
+
+    float2* filtered_d;
+    checkCudaErrors(
+        cudaMalloc(&filtered_d, sizeof(float2) * batch_size * (img_width / 2 + 1) * img_height));
+
+    /* element-wise matrix-mul */
+    componentwiseMatrixMul1vsBatchfloat2<<<dim_grid, dim_block>>>(
+        img_freqs_d, kernel_freqs_d, filtered_d, batch_size, (img_width / 2 + 1), img_height);
+    checkCudaErrors(cudaGetLastError());
+
+    checkCudaErrors(cudaDeviceSynchronize());
+    cudaEventRecord(stop);
+    checkCudaErrors(cudaDeviceSynchronize());
+    float milliseconds = 0;
+    checkCudaErrors(cudaDeviceSynchronize());
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    checkCudaErrors(cudaDeviceSynchronize());
+    printf("copy running time %.10f\n", milliseconds);
+
+#if DEBUG
+    checkCudaErrors(cudaDeviceSynchronize());
+    printf("filtered_d\n");
+    printDevice3Dfloat2(filtered_d, batch_size, (img_width / 2 + 1), img_height);
+#endif
 }
