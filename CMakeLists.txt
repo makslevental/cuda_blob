@@ -18,11 +18,11 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 include_directories(${CUDAToolkit_INCLUDE_DIRS})
 include_directories(include)
 
-add_executable(cuda_blob main.cu src/multigpu.cu)
+add_executable(cuda_blob src/main.cu src/multiGPU.cu src/util.cu)
 set_target_properties(
         cuda_blob
         PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
         CUDA_ARCHITECTURES 70-real
 )
-target_link_libraries(cuda_blob ${OpenCV_LIBS} CUDA::cufft)
+target_link_libraries(cuda_blob ${OpenCV_LIBS} CUDA::cufft ${CUDA_CUDA_LIBRARY} -lcuda)

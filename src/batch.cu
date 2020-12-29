@@ -6,81 +6,13 @@
 #include <cufft.h>
 #include <iostream>
 #include <opencv2/opencv.hpp>
-#include <tiffio.h>
 
 #include "batch.cuh"
 #include "helper_cuda.h"
 #include "stacktrace.h"
+#include "util.h"
 
-#define DEBUG 0
 
-__global__ void componentwiseMatrixMul1vsBatchfloat2(float2* singleIn,
-                                                     float2* batchIn,
-                                                     float2* out,
-                                                     int batch_size,
-                                                     int rows,
-                                                     int cols) {
-    int col = threadIdx.x + blockIdx.x * blockDim.x;
-    int row = threadIdx.y + blockIdx.y * blockDim.y;
-    int batch = blockIdx.z;
-
-    auto yy_xx = row * cols + col;
-    auto zz_yy_xx = batch * (rows * cols) + yy_xx;
-
-    if (batch < batch_size && row < rows && col < cols) {
-        out[zz_yy_xx].x =
-            singleIn[yy_xx].x * batchIn[zz_yy_xx].x - singleIn[yy_xx].y * batchIn[zz_yy_xx].y;
-        out[zz_yy_xx].y =
-            singleIn[yy_xx].x * batchIn[zz_yy_xx].y + singleIn[yy_xx].y * batchIn[zz_yy_xx].x;
-    }
-}
-
-void printDevice3Dfloat2(float2* dev_ptr, int batch_size, int width, int height) {
-    float2* host_ptr = new float2[height * width * batch_size];
-    checkCudaErrors(cudaMemcpy(
-        host_ptr, dev_ptr, sizeof(float2) * height * width * batch_size, cudaMemcpyDeviceToHost));
-    for (int k = 0; k < batch_size; k++) {
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                printf("%f + %f i    ",
-                       host_ptr[k * (height * width) + i * width + j].x,
-                       host_ptr[k * (height * width) + i * width + j].y);
-            }
-            std::cout << "\n";
-        }
-        printf("*********************\n");
-    }
-    delete[] host_ptr;
-}
-
-float** gaussianKernel(int width = 21, float sigma = 3.0) {
-    float** kernel = new float*[width];
-    auto mean = (width - 1) / 2;
-    auto norm = 0.0;
-    for (int y = 0; y < width; y++) {
-        kernel[y] = new float[width];
-        for (int x = 0; x < width; x++) {
-            kernel[y][x] = (1 / (2 * M_PI * pow(sigma, 2))) *
-                           exp(-(pow(x - mean, 2) + pow(y - mean, 2)) / (2 * pow(sigma, 2)));
-            norm += kernel[y][x];
-        }
-    }
-    for (int y = 0; y < width; y++) {
-        for (int x = 0; x < width; x++) {
-            kernel[y][x] /= norm;
-        }
-    }
-#if DEBUG
-    for (int y = 0; y < width; y++) {
-        for (int x = 0; x < width; x++) {
-            kernel[y][x] /= norm;
-            printf("%f ", kernel[y][x]);
-        }
-        std::cout << "\n";
-    }
-#endif
-    return kernel;
-}
 
 int runBatch() {
     /* - - - load image using OpenCV - - - */

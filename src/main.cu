@@ -1,4 +1,4 @@
-#include "batch.cuh"
-#include "multigpu.cuh"
+#define DEBUG 0
+#include <multiGPU.cuh>
 
 int main() { runMultiGPU(); }
