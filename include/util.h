@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <vector>
+#include "helper_cuda.h"
 
 std::ifstream openFile(const std::string& myFile);
 
@@ -28,4 +29,15 @@ __global__ void componentwiseMatrixMul1vsBatchfloat2(float2* singleIn,
                                                      int batchSize,
                                                      int rows,
                                                      int cols);
+
+#define CUDA_TIME(stmtsLambda)                                                                     \
+    checkCudaErrors(cudaDeviceSynchronize());                                                      \
+    cudaEventRecord(start);                                                                        \
+    stmtsLambda();                                                                                 \
+    checkCudaErrors(cudaDeviceSynchronize());                                                      \
+    cudaEventRecord(stop);                                                                         \
+    milliseconds = 0;                                                                              \
+    checkCudaErrors(cudaDeviceSynchronize());                                                      \
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
 #endif // CUDA_BLOB_UTIL_H

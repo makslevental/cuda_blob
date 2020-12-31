@@ -14,7 +14,6 @@
 #include "stacktrace.h"
 #include "util.h"
 
-
 void multiplyCoefficient(float2* signal,
                          cudaLibXtDesc* kernel,
                          int nGPUs,
@@ -23,20 +22,29 @@ void multiplyCoefficient(float2* signal,
                          int imgWidth);
 
 int runMultiGPU() {
+    cudaEvent_t start, stop;
+    float milliseconds = 0;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
     /* - - - load image using OpenCV - - - */
-    auto fp = "/home/max/dev_projects/cuda_blob/data/S_000_1752450056/"
-              "Tile_r1-c1_S_000_1752450056.tif";
-    cv::Mat imgCv = imread(fp, cv::IMREAD_GRAYSCALE);
-    if (imgCv.empty()) {
-        std::cout << "Could not read the image: " << fp << std::endl;
-        return 1;
-    }
-    imgCv.convertTo(imgCv, CV_32FC1);
-    cv::resize(imgCv, imgCv, cv::Size(8, 8));
+    cv::Mat imgCv;
+    CUDA_TIME([&]() {
+        auto fp = "/home/max/dev_projects/cuda_blob/data/S_000_1752450056/"
+                  "Tile_r1-c1_S_000_1752450056.tif";
+        imgCv = imread(fp, cv::IMREAD_GRAYSCALE);
+        if (imgCv.empty()) {
+            std::cout << "Could not read the image: " << fp << std::endl;
+            return 1;
+        }
+        imgCv.convertTo(imgCv, CV_32FC1);
+    })
+    printf("img load and convert to float time %.5fms\n", milliseconds);
+    cv::resize(imgCv, imgCv, cv::Size(8192, 8192));
     int imgWidth = imgCv.cols;
     int imgHeight = imgCv.rows;
-    int batchSize = 2;
-    printf("width %d, height %d\n", imgWidth, imgHeight);
+    int batchSize = 15;
+    printf("width %d, height %d batch size %d\n", imgWidth, imgHeight, batchSize);
     assert(imgCv.channels() == 1);
 
     /* - - - Building the Kernel with 0-padding to the size of the image - - - */
@@ -50,22 +58,25 @@ int runMultiGPU() {
     std::fill(kernelH.begin(), kernelH.begin() + totalSize, 0);
     int y, x;
     size_t zzyyxx;
-    for (int k = 0; k < batchSize; k++) {
-        auto radius = 1;
-        auto kernel = gaussianKernel(2 * radius + 1);
-        for (int i = ((imgHeight / 2) - radius); i <= ((imgHeight / 2) + radius); i++) {
-            for (int j = ((imgWidth / 2) - radius); j <= ((imgWidth / 2) + radius); j++) {
-                y = i - ((imgHeight / 2) - radius);
-                x = j - ((imgWidth / 2) - radius);
-                zzyyxx = k * (imgHeight * imgWidth) + i * imgWidth + j;
-                kernelH[zzyyxx] = kernel[y][x];
+    CUDA_TIME([&]() {
+        for (int k = 0; k < batchSize; k++) {
+            auto radius = 1;
+            auto kernel = gaussianKernel(2 * radius + 1);
+            for (int i = ((imgHeight / 2) - radius); i <= ((imgHeight / 2) + radius); i++) {
+                for (int j = ((imgWidth / 2) - radius); j <= ((imgWidth / 2) + radius); j++) {
+                    y = i - ((imgHeight / 2) - radius);
+                    x = j - ((imgWidth / 2) - radius);
+                    zzyyxx = k * (imgHeight * imgWidth) + i * imgWidth + j;
+                    kernelH[zzyyxx] = kernel[y][x];
+                }
             }
         }
-    }
+    })
+    printf("kernel creation time %.5fms\n", milliseconds);
 
     ////////////////////// doesn't work
-    print3Dfloat(reinterpret_cast<float*>(imgCv.data), 1, imgHeight, imgWidth);
-    print3Dfloat(kernelH.data(), batchSize, imgHeight, imgWidth+2);
+    //    print3Dfloat(reinterpret_cast<float*>(imgCv.data), 1, imgHeight, imgWidth);
+    //    print3Dfloat(kernelH.data(), batchSize, imgHeight, imgWidth + 2);
 
     /* - - -  ffts - - - */
     // img fft
@@ -74,17 +85,27 @@ int runMultiGPU() {
     float* imgD;
     float2* imgFreqsD;
 
-    checkCudaErrors(cufftPlan2d(&imgForwardPlan, imgWidth, imgHeight, CUFFT_R2C));
-    checkCudaErrors(cufftPlan2d(&imgInversePlan, imgWidth, imgHeight, CUFFT_C2R));
+    CUDA_TIME(
+        [&]() { checkCudaErrors(cufftPlan2d(&imgForwardPlan, imgWidth, imgHeight, CUFFT_R2C)); })
+    printf("img forward plan time %.5fms\n", milliseconds);
+    CUDA_TIME(
+        [&]() { checkCudaErrors(cufftPlan2d(&imgInversePlan, imgWidth, imgHeight, CUFFT_C2R)); })
+    printf("img inverse plan time %.5fms\n", milliseconds);
     checkCudaErrors(cudaMalloc(&imgD, sizeof(float) * imgHeight * imgWidth));
     checkCudaErrors(cudaMalloc(&imgFreqsD, sizeof(float2) * imgHeight * (imgWidth / 2 + 1)));
-    checkCudaErrors(
-        cudaMemcpy(imgD, imgH, sizeof(float) * imgHeight * imgWidth, cudaMemcpyHostToDevice));
-    checkCudaErrors(cufftExecR2C(imgForwardPlan, imgD, imgFreqsD));
+
+    CUDA_TIME([&]() {
+        checkCudaErrors(
+            cudaMemcpy(imgD, imgH, sizeof(float) * imgHeight * imgWidth, cudaMemcpyHostToDevice));
+    })
+    printf("img copy to device time %.5fms\n", milliseconds);
+    CUDA_TIME([&]() { checkCudaErrors(cufftExecR2C(imgForwardPlan, imgD, imgFreqsD)); })
+    printf("img fft time %.5fms\n", milliseconds);
 
     // kernel fft
     static const int numGPUs = 2;
     int gpus[numGPUs] = {0, 1};
+
     cufftHandle kernelForwardPlan, kernelInversePlan;
     checkCudaErrors(cufftCreate(&kernelForwardPlan));
     checkCudaErrors(cufftCreate(&kernelInversePlan));
@@ -105,37 +126,45 @@ int runMultiGPU() {
     int oStride = 1;
 
     size_t workSize[2];
-    cufftMakePlanMany(kernelForwardPlan,
-                      rank,
-                      n,
-                      inEmbed,
-                      iStride,
-                      iDist,
-                      onEmbed,
-                      oStride,
-                      oDist,
-                      CUFFT_R2C,
-                      batchSize,
-                      workSize);
-    cufftMakePlanMany(kernelInversePlan,
-                      rank,
-                      n,
-                      onEmbed,
-                      oStride,
-                      oDist,
-                      inEmbed,
-                      iStride,
-                      iDist,
-                      CUFFT_C2R,
-                      batchSize,
-                      workSize);
-
+    CUDA_TIME([&]() {
+        cufftMakePlanMany(kernelForwardPlan,
+                          rank,
+                          n,
+                          inEmbed,
+                          iStride,
+                          iDist,
+                          onEmbed,
+                          oStride,
+                          oDist,
+                          CUFFT_R2C,
+                          batchSize,
+                          workSize);
+        cufftMakePlanMany(kernelInversePlan,
+                          rank,
+                          n,
+                          onEmbed,
+                          oStride,
+                          oDist,
+                          inEmbed,
+                          iStride,
+                          iDist,
+                          CUFFT_C2R,
+                          batchSize,
+                          workSize);
+    })
+    printf("kernel plan time %.5fms\n", milliseconds);
     cudaLibXtDesc* kernelFreqsDDesc;
     checkCudaErrors(cufftXtMalloc(kernelForwardPlan, &kernelFreqsDDesc, CUFFT_XT_FORMAT_INPLACE));
-    checkCudaErrors(cufftXtMemcpy(
-        kernelForwardPlan, kernelFreqsDDesc, kernelH.data(), CUFFT_COPY_HOST_TO_DEVICE));
-    checkCudaErrors(
-        cufftXtExecDescriptorR2C(kernelForwardPlan, kernelFreqsDDesc, kernelFreqsDDesc));
+    CUDA_TIME([&]() {
+        checkCudaErrors(cufftXtMemcpy(
+            kernelForwardPlan, kernelFreqsDDesc, kernelH.data(), CUFFT_COPY_HOST_TO_DEVICE));
+    })
+    printf("kernel copy to device time %.5fms\n", milliseconds);
+    CUDA_TIME([&]() {
+        checkCudaErrors(
+            cufftXtExecDescriptorR2C(kernelForwardPlan, kernelFreqsDDesc, kernelFreqsDDesc));
+    })
+    printf("kernel fft time %.5fms\n", milliseconds);
 
     //    std::vector<float2> hOut(batchSize * imgHeight * (imgWidth / 2 + 1));
     //    checkCudaErrors(cufftXtMemcpy(
@@ -145,33 +174,34 @@ int runMultiGPU() {
 
     //    print3Dfloat2(hOut, batchSize, imgHeight, (imgWidth / 2 + 1));
 
-    printf("\n\nValue of Library Descriptor\n");
-    printf("Number of GPUs %d\n", kernelFreqsDDesc->descriptor->nGPUs);
-    printf("Device id  %d %d\n",
-           kernelFreqsDDesc->descriptor->GPUs[0],
-           kernelFreqsDDesc->descriptor->GPUs[1]);
-    printf("Data size on GPU %ld %ld\n",
-           (long)(kernelFreqsDDesc->descriptor->size[0] / sizeof(cufftComplex)),
-           (long)(kernelFreqsDDesc->descriptor->size[1] / sizeof(cufftComplex)));
+    //    printf("\n\nValue of Library Descriptor\n");
+    //    printf("Number of GPUs %d\n", kernelFreqsDDesc->descriptor->nGPUs);
+    //    printf("Device id  %d %d\n",
+    //           kernelFreqsDDesc->descriptor->GPUs[0],
+    //           kernelFreqsDDesc->descriptor->GPUs[1]);
+    //    printf("Data size on GPU %ld %ld\n",
+    //           (long)(kernelFreqsDDesc->descriptor->size[0] / sizeof(cufftComplex)),
+    //           (long)(kernelFreqsDDesc->descriptor->size[1] / sizeof(cufftComplex)));
 
     // Multiply the coefficients together and normalize the result
-    multiplyCoefficient(imgFreqsD, kernelFreqsDDesc, numGPUs, batchSize, imgHeight, imgWidth);
+    CUDA_TIME([&]() {
+        multiplyCoefficient(imgFreqsD, kernelFreqsDDesc, numGPUs, batchSize, imgHeight, imgWidth);
+    })
+    printf("filtering time %.5fms\n", milliseconds);
 
-    printf("Transforming signal back cufftExecC2R\n");
-    checkCudaErrors(
-        cufftXtExecDescriptorC2R(kernelInversePlan, kernelFreqsDDesc, kernelFreqsDDesc));
+    CUDA_TIME([&]() {
+        checkCudaErrors(
+            cufftXtExecDescriptorC2R(kernelInversePlan, kernelFreqsDDesc, kernelFreqsDDesc));
+    })
+    printf("filtered inverse fft time %.5fms\n", milliseconds);
     std::vector<float> filteredH(totalSize);
-    checkCudaErrors(cufftXtMemcpy(
-        kernelInversePlan, filteredH.data(), kernelFreqsDDesc, CUFFT_COPY_DEVICE_TO_HOST));
+    CUDA_TIME([&]() {
+        checkCudaErrors(cufftXtMemcpy(
+            kernelInversePlan, filteredH.data(), kernelFreqsDDesc, CUFFT_COPY_DEVICE_TO_HOST));
+    })
+    printf("filtered copy to host time %.5fms\n", milliseconds);
 
-    //    cudaEventRecord(stop);
-    //    float milliseconds = 0;
-    //    checkCudaErrors(cudaDeviceSynchronize());
-    //    cudaEventElapsedTime(&milliseconds, start, stop);
-    //    printf("copy running time %.10f\n", milliseconds);
-
-    print3Dfloat(filteredH.data(), batchSize, imgHeight, imgWidth+2);
-
+    //    print3Dfloat(filteredH.data(), batchSize, imgHeight, imgWidth + 2);
 
     checkCudaErrors(cufftXtFree(kernelFreqsDDesc));
     checkCudaErrors(cufftDestroy(kernelForwardPlan));
@@ -198,13 +228,14 @@ void multiplyCoefficient(float2* signal,
     dim3 dimGrid(nBlocksW, nBlocksH, batchSize);
 
     int imgSize = sizeof(float2) * imgHeight * (imgWidth / 2 + 1);
-
+    int origDevice;
+    checkCudaErrors(cudaGetDevice(&origDevice));
     int device;
     for (int i = 0; i < nGPUs; i++) {
         device = kernel->descriptor->GPUs[i];
         checkCudaErrors(cudaSetDevice(device));
         float2* localSignal;
-        if (device != 0) {
+        if (device != origDevice) {
             checkCudaErrors(cudaMalloc(&localSignal, imgSize));
             checkCudaErrors(cudaMemcpyPeer(localSignal, device, signal, 0, imgSize));
         } else {
@@ -217,14 +248,15 @@ void multiplyCoefficient(float2* signal,
             batchSize / nGPUs,
             imgHeight,
             (imgWidth / 2 + 1));
-        getLastCudaError("Kernel execution failed [ componentwiseMatrixMul1vsBatchfloat2 ]");
     }
 
     for (int i = 0; i < nGPUs; i++) {
         device = kernel->descriptor->GPUs[i];
         checkCudaErrors(cudaSetDevice(device));
         checkCudaErrors(cudaDeviceSynchronize());
+        getLastCudaError("Kernel execution failed [ componentwiseMatrixMul1vsBatchfloat2 ]");
     }
+    checkCudaErrors(cudaSetDevice(origDevice));
 }
 
 //#include <assert.h>
@@ -274,5 +306,3 @@ void multiplyCoefficient(float2* signal,
 //
 //    return 0;
 //}
-
-
