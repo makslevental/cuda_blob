@@ -1,7 +1,10 @@
+import numbers
+
 import cupy as cp
+import numpy as np
 from numba import cuda
 
-componentwiseMatrixMul1vsBatchfloat2 = cp.RawKernel(
+componentwise_mult_raw_kernel = cp.RawKernel(
     r"""
 extern "C" __global__ void componentwiseMatrixMul1vsBatchfloat2(
     const float2* singleIn,
@@ -29,7 +32,7 @@ extern "C" __global__ void componentwiseMatrixMul1vsBatchfloat2(
 
 
 @cuda.jit("void(complex64[:], complex64[:], complex64[:], int64, int64, int64)")
-def componentwise_mult_depr(single_in, batch_in, out, batch_size, rows, cols):
+def componentwise_mult_numba_depr(single_in, batch_in, out, batch_size, rows, cols):
     col = cuda.threadIdx.x + cuda.blockIdx.x * cuda.blockDim.x
     row = cuda.threadIdx.y + cuda.blockIdx.y * cuda.blockDim.y
     batch = cuda.blockIdx.z
@@ -43,7 +46,7 @@ def componentwise_mult_depr(single_in, batch_in, out, batch_size, rows, cols):
 @cuda.jit(
     "void(complex64[:, :], complex64[:, :, :], complex64[:, :, :], uint64, uint64, uint64)"
 )
-def componentwise_mult(single_in, batch_in, out, batch_size, rows, cols):
+def componentwise_mult_numba(single_in, batch_in, out, batch_size, rows, cols):
     col = cuda.threadIdx.x + cuda.blockIdx.x * cuda.blockDim.x
     row = cuda.threadIdx.y + cuda.blockIdx.y * cuda.blockDim.y
     batch = cuda.blockIdx.z
@@ -58,3 +61,51 @@ def componentwise_mult(single_in, batch_in, out, batch_size, rows, cols):
         #     single_in[yy_xx].real * batch_in[zz_yy_xx].real
         #     + single_in[yy_xx].imag * batch_in[zz_yy_xx].imag
         # )
+
+
+def gaussian_kernel(width: int = 21, sigma: int = 3, dim: int = 2) -> np.ndarray:
+    """Gaussian kernel
+    Parameters
+    ----------
+    width: bandwidth of the kernel
+    sigma: std of the kernel
+    dim: dimensions of the kernel (images -> 2)
+
+    Returns
+    -------
+    kernel : gaussian kernel
+    """
+    assert width > 2
+
+    if isinstance(width, numbers.Number):
+        width = [width] * dim
+    if isinstance(sigma, numbers.Number):
+        sigma = [sigma] * dim
+    kernel = 1
+    meshgrids = np.meshgrid(*[np.arange(size, dtype=np.float32) for size in width])
+    for size, std, mgrid in zip(width, sigma, meshgrids):
+        mean = (size - 1) / 2
+        kernel *= (
+                1 / (std * np.sqrt(2 * np.pi)) * np.exp(-(((mgrid - mean) / std) ** 2) / 2)
+        )
+
+    # Make sure sum of values in gaussian kernel equals 1.
+    return kernel / np.sum(kernel)
+
+
+def create_embedded_kernel(batch_size, height, width) -> cp.core.core.ndarray:
+    # can't just instantiate on the gpu because then writes will be compiled
+    # to a ton of individual kernels
+    kernel = np.zeros((batch_size, height, width))
+    for k in range(batch_size):
+        radius = k + 1
+        assert 2 * radius + 1 <= height
+        # TODO: not right
+        embedded_kernel = gaussian_kernel(width=2 * radius + 1)
+        for r in range(height // 2 - radius, height // 2 + radius + 1):
+            for c in range(width // 2 - radius, width // 2 + radius + 1):
+                # fmt: off
+                kernel[k][r][c] = embedded_kernel[r - height // 2 - radius][c - width // 2 - radius]
+                # fmt: on
+
+    return cp.asarray(kernel)

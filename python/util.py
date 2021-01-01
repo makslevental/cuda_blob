@@ -1,6 +1,7 @@
-import numbers
-
+import cupy as cp
 import numpy as np
+from PIL import Image, ImageChops
+from PIL.Image import BILINEAR
 
 
 def nd_to_text(A, w=None, h=None):
@@ -38,31 +39,25 @@ def print_nd_array(arr: np.ndarray, round=3):
     print(nd_to_text(arr.round(round)))
 
 
-def gaussian_kernel(width: int = 21, sigma: int = 3, dim: int = 2) -> np.ndarray:
-    """Gaussian kernel
-    Parameters
-    ----------
-    width: bandwidth of the kernel
-    sigma: std of the kernel
-    dim: dimensions of the kernel (images -> 2)
+def trim(img):
+    bg = Image.new(img.mode, img.size, img.getpixel((0, 0)))
+    diff = ImageChops.difference(img, bg)
+    diff = ImageChops.add(diff, diff, scale=2.0, offset=-100)
+    bbox = diff.getbbox()
+    if bbox:
+        return img.crop(bbox)
+    else:
+        return img
 
-    Returns
-    -------
-    kernel : gaussian kernel
-    """
-    assert width > 2
 
-    if isinstance(width, numbers.Number):
-        width = [width] * dim
-    if isinstance(sigma, numbers.Number):
-        sigma = [sigma] * dim
-    kernel = 1
-    meshgrids = np.meshgrid(*[np.arange(size, dtype=np.float32) for size in width])
-    for size, std, mgrid in zip(width, sigma, meshgrids):
-        mean = (size - 1) / 2
-        kernel *= (
-            1 / (std * np.sqrt(2 * np.pi)) * np.exp(-(((mgrid - mean) / std) ** 2) / 2)
-        )
+def load_tiff(fp, resize=None):
+    # TODO: pinned memory?
+    # convert to I so that there's no clipping (float for CUDA)
+    img = trim(Image.open(fp)).convert("I").convert("F")
+    if resize is None:
+        # nearest low 2^k for fft
+        resize = 2 ** int(np.log2(min(*img.size)))
+        resize = (resize, resize)
 
-    # Make sure sum of values in gaussian kernel equals 1.
-    return kernel / np.sum(kernel)
+    img = img.resize(resize, resample=BILINEAR)
+    return cp.array(img) / 255.0
