@@ -2,24 +2,25 @@ import cupy as cp
 import numpy as np
 from PIL import Image, ImageChops
 from PIL.Image import BILINEAR
-from cupy.cuda.cufft import CUFFT_FORWARD
+from cupy.cuda.cufft import CUFFT_FORWARD, CUFFT_INVERSE
 from cupy.fft._fft import _fftn
 from cupyx.scipy.fftpack import get_fft_plan
 
-from util import print_nd_array, gaussian_kernel
+from util import gaussian_kernel
 
 DEBUG = True
 
 cp.fft.config.enable_nd_planning = False
 
 
-def get_kernel_fft(kernel):
+# just happens to work for both the kernel and the image
+def get_fft(inp):
     axes = (-2, -1)
-    forward_plan = get_fft_plan(kernel, axes=axes, value_type="R2C")
-    inverse_plan = get_fft_plan(kernel, axes=axes, value_type="C2R")
+    shape = list(inp.shape[-2:])
+    forward_plan = get_fft_plan(inp, axes=axes, value_type="R2C")
     # with s=None the sizes of the input along the `axes` dimensions
-    kernel_freqs = _fftn(
-        kernel,
+    freqs = _fftn(
+        inp,
         s=None,
         axes=axes,
         norm="ortho",
@@ -29,7 +30,23 @@ def get_kernel_fft(kernel):
         plan=forward_plan,
         overwrite_x=False,
     )
-    return kernel_freqs, inverse_plan
+    return freqs
+
+
+def get_inverse_fft(freqs):
+    axes = (-2, -1)
+    inverse_plan = get_fft_plan(freqs, axes=axes, value_type="C2R")
+    return _fftn(
+        freqs,
+        s=None,
+        axes=(-2, -1),
+        norm="ortho",
+        direction=CUFFT_INVERSE,
+        value_type="C2R",
+        order="C",
+        plan=inverse_plan,
+        overwrite_x=False,
+    )
 
 
 def create_embedded_kernel(batch_size, height, width) -> cp.core.core.ndarray:
@@ -50,15 +67,15 @@ def create_embedded_kernel(batch_size, height, width) -> cp.core.core.ndarray:
     return cp.asarray(kernel)
 
 
-def trim(im):
-    bg = Image.new(im.mode, im.size, im.getpixel((0, 0)))
-    diff = ImageChops.difference(im, bg)
+def trim(img):
+    bg = Image.new(img.mode, img.size, img.getpixel((0, 0)))
+    diff = ImageChops.difference(img, bg)
     diff = ImageChops.add(diff, diff, scale=2.0, offset=-100)
     bbox = diff.getbbox()
     if bbox:
-        return im.crop(bbox)
+        return img.crop(bbox)
     else:
-        return im
+        return img
 
 
 def load_tiff(fp, resize=None):
@@ -79,7 +96,9 @@ def main():
     with cp.cuda.Device(0):
         img = load_tiff(fp)
         kernel = create_embedded_kernel(30, *img.shape)
-        kernel_freqs, _ = get_kernel_fft(kernel)
+        kernel_freqs = get_fft(kernel)
+        print(kernel_freqs.astype(cp.csingle).dtype)
+        # componentwiseMatrixMul1vsBatchfloat2((5,), (5,), (x1, x2, y))  # grid, block and arguments
 
 
 if __name__ == "__main__":

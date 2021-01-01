@@ -29,25 +29,28 @@ def cuda_profiler_stop():
 
 
 class GPUTimer:
-    def __init__(self, device: int):
-        self._device = device
-        with Device(self._device):
-            self._start = eventCreate()
-            self._stop = eventCreate()
+    def __init__(self, msg: str):
+        self._msg = msg
+        self._start = eventCreate()
+        self._stop = eventCreate()
 
     def start(self):
-        with Device(self._device):
-            eventRecord(self._start, 0)
+        eventRecord(self._start, 0)
 
     def stop(self):
-        with Device(self._device):
-            eventRecord(self._stop, 0)
+        eventRecord(self._stop, 0)
 
     def elapsed_time(self):
-        with Device(self._device):
-            eventSynchronize(self._stop)
-            e = eventElapsedTime(self._start, self._stop)
+        eventSynchronize(self._stop)
+        e = eventElapsedTime(self._start, self._stop)
         return e
+
+    def __enter__(self):
+        self.start()
+
+    def __exit__(self, type, value, traceback):
+        self.stop()
+        print(f"{self._msg} time {self.elapsed_time():.3f}ms")
 
 
 def get_used_cuda_mem(device):
