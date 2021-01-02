@@ -22,3 +22,5 @@ The short of it is
 7. run the script using `mpiexec`
 8. map the source in the run configuration (need to map the specific files)
 9. you can only set one port in the run configuration and that prevents multiple parallel runs. better alternative (so you don't have to keep changing the ports in `set_trace` is to change the reverse tunnel instead)
+
+if you get `mpi4py.MPI.Exception: MPI_ERR_TRUNCATE: message truncated` you forgot to add `dtype` to cupy.

@@ -85,6 +85,43 @@ class MyTestCase(unittest.TestCase):
                 print_nd_array(kernel_freqs_np)
             raise
 
+    def test_gather_fft(self):
+        kernels = [
+            (i + 1) * np.ones((self.b // size, self.h, self.w)) for i in range(size)
+        ]
+        kernel = None
+        if rank == 0:
+            # mpi4py.MPI.Exception: MPI_ERR_TRUNCATE: message truncated
+            # means add dtype
+            kernel = cp.asarray(np.stack(kernels), dtype="f")
+
+        recv_kernel = cp.empty((self.b // size, self.h, self.w), dtype="f")
+        comm.Scatter(kernel, recv_kernel, root=0)
+        kernel_freqs = get_fft(recv_kernel)
+
+        recv_kernel_freqs = None
+        if rank == 0:
+            recv_kernel_freqs = cp.empty(
+                (self.b, self.h, self.w // 2 + 1), dtype="complex64"
+            )
+        comm.Gather(kernel_freqs, recv_kernel_freqs, root=0)
+        if rank == 0:
+            kernel_freqs_np = np.fft.rfft2(
+                np.concatenate(kernels), axes=(-2, -1), norm="ortho"
+            )
+            try:
+                self.assertTrue(
+                    np.allclose(recv_kernel_freqs, kernel_freqs_np, atol=1.0e-5)
+                )
+            except:
+                diff = np.abs(cp.asnumpy(recv_kernel_freqs) - kernel_freqs_np)
+                print(diff.min(), diff.max())
+                if (self.b, self.h, self.w) <= (2, 100, 100):
+                    print_nd_array(diff, round=10)
+                    print_nd_array(recv_kernel_freqs)
+                    print_nd_array(kernel_freqs_np)
+                raise
+
 
 if __name__ == "__main__":
     unittest.main()
