@@ -15,8 +15,7 @@ from util import print_nd_array
 
 class MyTestCase(unittest.TestCase):
     b, h, w = 20, 4096, 4096
-    b //= 2
-    print(f"tests with b {b}, h {h}, w {w}")
+    print(f"single gpu tests with b {b}, h {h}, w {w}")
 
     def test_single_gpu_inverse_fft(self):
         with cp.cuda.Device(0):

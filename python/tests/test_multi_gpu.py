@@ -1,7 +1,11 @@
 import unittest
 
 import cupy as cp
+import numpy as np
 from mpi4py import MPI
+
+from ffts import get_fft
+from util import print_nd_array
 
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
@@ -16,6 +20,9 @@ rank = comm.Get_rank()
 
 
 class MyTestCase(unittest.TestCase):
+    b, h, w = 20, 4096, 4096
+    print(f"multi gpu tests with b {b}, h {h}, w {w}")
+
     def test_basic_mpi(self):
         # Allreduce
         sendbuf = cp.arange(10, dtype="i")
@@ -50,6 +57,33 @@ class MyTestCase(unittest.TestCase):
         comm.Scatter(sendbuf, recvbuf, root=0)
         # element wise comparison ("all close to each other")
         self.assertTrue(cp.allclose(recvbuf, rank))
+
+    def test_scatter_fft(self):
+        kernels = [
+            (i + 1) * np.ones((self.b // size, self.h, self.w)) for i in range(size)
+        ]
+        kernel = None
+        if rank == 0:
+            # mpi4py.MPI.Exception: MPI_ERR_TRUNCATE: message truncated
+            # means add dtype
+            kernel = cp.asarray(np.stack(kernels), dtype="f")
+
+        recv_kernel = cp.empty((self.b // size, self.h, self.w), dtype="f")
+        comm.Scatter(kernel, recv_kernel, root=0)
+        kernel_freqs = get_fft(recv_kernel)
+
+        kernel_freqs_np = np.fft.rfft2(kernels[rank], axes=(-2, -1), norm="ortho")
+
+        try:
+            self.assertTrue(cp.allclose(kernel_freqs, kernel_freqs_np, atol=1.0e-6))
+        except:
+            diff = np.abs(cp.asnumpy(kernel_freqs) - kernel_freqs_np)
+            print(diff.min(), diff.max())
+            if (self.b, self.h, self.w) <= (2, 100, 100):
+                print_nd_array(diff, round=10)
+                print_nd_array(kernel_freqs)
+                print_nd_array(kernel_freqs_np)
+            raise
 
 
 if __name__ == "__main__":
