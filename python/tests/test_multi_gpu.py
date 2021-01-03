@@ -4,12 +4,12 @@ import cupy as cp
 import numpy as np
 from mpi4py import MPI
 
-from ffts import get_fft
-from util import print_nd_array
-
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
 rank = comm.Get_rank()
+
+from ffts import get_fft
+from util import print_nd_array
 
 
 # import pydevd_pycharm
