@@ -1,22 +1,20 @@
 import cupy as cp
 from cupy.cuda.cufft import CUFFT_FORWARD, CUFFT_INVERSE
-from cupy.fft._fft import _fftn
+from cupy.fft._fft import _fftn as fftn
 from cupyx.scipy.fftpack import get_fft_plan
 
 cp.fft.config.enable_nd_planning = False
 
 
-# TODO: cache the plans
-
-def get_fft(inp):
-    axes = (-2, -1)
-    forward_plan = get_fft_plan(inp, axes=axes, value_type="R2C")
+def get_fft(
+    inp: cp.core.core.ndarray, forward_plan, axes=(-2, -1)
+) -> cp.core.core.ndarray:
     # with s=None the sizes of the input along the `axes` dimensions
-    freqs = _fftn(
+    freqs = fftn(
         inp,
         s=None,
         axes=axes,
-        norm="ortho",
+        norm="ortho",  # divides by sqrt(2)
         direction=CUFFT_FORWARD,
         value_type="R2C",
         order="C",
@@ -26,13 +24,11 @@ def get_fft(inp):
     return freqs
 
 
-def get_inverse_fft(freqs):
-    axes = (-2, -1)
-    inverse_plan = get_fft_plan(freqs, axes=axes, value_type="C2R")
-    return _fftn(
+def get_inverse_fft(freqs, inverse_plan, axes=(-2, -1)):
+    return fftn(
         freqs,
         s=None,
-        axes=(-2, -1),
+        axes=axes,
         norm="ortho",
         direction=CUFFT_INVERSE,
         value_type="C2R",

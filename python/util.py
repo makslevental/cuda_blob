@@ -1,7 +1,9 @@
-import cupy as cp
+from typing import Tuple
+
 import numpy as np
 from PIL import Image, ImageChops
 from PIL.Image import BILINEAR
+import collections
 
 
 def nd_to_text(A, w=None, h=None):
@@ -13,9 +15,9 @@ def nd_to_text(A, w=None, h=None):
             for i, AA in enumerate(A[:-1]):
                 s += str(AA) + " " * (max(w[i], len(str(AA))) - len(str(AA)) + 1)
             s += (
-                    str(A[-1])
-                    + " " * (max(w[-1], len(str(A[-1]))) - len(str(A[-1])))
-                    + "] "
+                str(A[-1])
+                + " " * (max(w[-1], len(str(A[-1]))) - len(str(A[-1])))
+                + "] "
             )
     elif A.ndim == 2:
         w1 = [max([len(str(s)) for s in A[:, i]]) for i in range(A.shape[1])]
@@ -39,7 +41,7 @@ def print_nd_array(arr: np.ndarray, round=3):
     print(nd_to_text(arr.round(round)))
 
 
-def trim(img):
+def trim(img) -> Image:
     bg = Image.new(img.mode, img.size, img.getpixel((0, 0)))
     diff = ImageChops.difference(img, bg)
     diff = ImageChops.add(diff, diff, scale=2.0, offset=-100)
@@ -50,14 +52,25 @@ def trim(img):
         return img
 
 
-def load_tiff(fp, resize=None):
-    # TODO: pinned memory?
+def load_tiff(fp, resize=None) -> np.ndarray:
+    # TODO(max): pinned memory?
     # convert to I so that there's no clipping (float for CUDA)
     img = trim(Image.open(fp)).convert("I").convert("F")
-    if resize is None:
-        # nearest low 2^k for fft
-        resize = 2 ** int(np.log2(min(*img.size)))
-        resize = (resize, resize)
+    if resize is not None:
+        img = img.resize(resize, resample=BILINEAR)
 
-    img = img.resize(resize, resample=BILINEAR)
-    return cp.array(img) / 255.0
+    return np.array(img) / 255.0
+
+
+dim2 = collections.namedtuple("dim2", "x y")
+dim3 = collections.namedtuple("dim3", "x y z")
+
+
+def get_grid_block_dims(batch_size, img_h, img_w, num_threads=32) -> Tuple[dim3, dim2]:
+    n_blocks_h, n_blocks_w = img_h // num_threads, img_w // num_threads
+    if n_blocks_w % batch_size or n_blocks_w == 0:
+        n_blocks_w += 1
+    if n_blocks_h % batch_size or n_blocks_h == 0:
+        n_blocks_h += 1
+
+    return dim3(n_blocks_w, n_blocks_h, batch_size), dim2(num_threads, num_threads)

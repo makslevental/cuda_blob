@@ -2,6 +2,7 @@ import numbers
 
 import cupy as cp
 import numpy as np
+from cupy.cudnn import pooling_forward
 from numba import cuda
 
 componentwise_mult_raw_kernel = cp.RawKernel(
@@ -86,26 +87,50 @@ def gaussian_kernel(width: int = 21, sigma: int = 3, dim: int = 2) -> np.ndarray
     for size, std, mgrid in zip(width, sigma, meshgrids):
         mean = (size - 1) / 2
         kernel *= (
-                1 / (std * np.sqrt(2 * np.pi)) * np.exp(-(((mgrid - mean) / std) ** 2) / 2)
+            1 / (std * np.sqrt(2 * np.pi)) * np.exp(-(((mgrid - mean) / std) ** 2) / 2)
         )
 
     # Make sure sum of values in gaussian kernel equals 1.
     return kernel / np.sum(kernel)
 
 
-def create_embedded_kernel(batch_size, height, width) -> cp.core.core.ndarray:
+def create_embedded_kernel(
+    sigmas,
+    height,
+    width,
+    truncate=5.0,
+) -> cp.core.core.ndarray:
     # can't just instantiate on the gpu because then writes will be compiled
     # to a ton of individual kernels
-    kernel = np.zeros((batch_size, height, width))
-    for k in range(batch_size):
-        radius = k + 1
-        assert 2 * radius + 1 <= height
-        # TODO: not right
-        embedded_kernel = gaussian_kernel(width=2 * radius + 1)
+
+    kernel = np.zeros((len(sigmas), height, width))
+    for i, s in enumerate(sigmas):
+        radius = int(truncate * s + 0.5)
+        embedded_kernel = gaussian_kernel(width=2 * radius + 1, sigma=s)
         for r in range(height // 2 - radius, height // 2 + radius + 1):
             for c in range(width // 2 - radius, width // 2 + radius + 1):
                 # fmt: off
-                kernel[k][r][c] = embedded_kernel[r - height // 2 - radius][c - width // 2 - radius]
+                kernel[i][r][c] = embedded_kernel[r - height // 2 - radius][c - width // 2 - radius]
                 # fmt: on
 
     return cp.asarray(kernel)
+
+
+CUDNN_POOLING_MAX = 0
+
+
+# import cupy.cudnn
+#
+# cudnn = cupy.cudnn  # type: tp.Optional[types.ModuleType]
+# libcudnn = cupy.cupy.cuda.cudnn  # type: tp.Any # NOQA
+# cudnn._py_cudnn
+
+
+def max_pool_3d(
+    inp: cp.ndarray, size=(3, 3, 3), stride=(1, 1, 1), mode=CUDNN_POOLING_MAX
+):
+    pad = tuple((s - 1) // 2 for s in size)
+    # pool = max_pooling_nd(Variable(inp[cp.newaxis, cp.newaxis, :, :]), 3, 1, 1)
+    out = cp.empty((1, 1) + inp.shape, dtype=inp.dtype)
+    pooling_forward(inp[cp.newaxis, cp.newaxis, :], out, size, stride, pad, mode)
+    return out
