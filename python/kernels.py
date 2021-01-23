@@ -64,6 +64,9 @@ def componentwise_mult_numba(single_in, batch_in, out, batch_size, rows, cols):
         # )
 
 
+def cupy_mult(kernel_freqs, img_freqs):
+    return kernel_freqs * img_freqs
+
 def gaussian_kernel(width: int = 21, sigma: int = 3, dim: int = 2) -> np.ndarray:
     """Gaussian kernel
     Parameters
@@ -113,6 +116,9 @@ def create_embedded_kernel(
                 kernel[i][r][c] = embedded_kernel[r - height // 2 - radius][c - width // 2 - radius]
                 # fmt: on
 
+    # roll so that final images don't need to be rolled
+    # imagine convolving with a centered dirac delta - you'll induce a shift
+    kernel = np.roll(kernel, (height//2, width//2), axis=(-2, -1))
     return cp.asarray(kernel)
 
 
@@ -128,9 +134,9 @@ CUDNN_POOLING_MAX = 0
 
 def max_pool_3d(
     inp: cp.ndarray, size=(3, 3, 3), stride=(1, 1, 1), mode=CUDNN_POOLING_MAX
-):
+) -> cp.ndarray:
     pad = tuple((s - 1) // 2 for s in size)
     # pool = max_pooling_nd(Variable(inp[cp.newaxis, cp.newaxis, :, :]), 3, 1, 1)
     out = cp.empty((1, 1) + inp.shape, dtype=inp.dtype)
     pooling_forward(inp[cp.newaxis, cp.newaxis, :], out, size, stride, pad, mode)
-    return out
+    return out.squeeze()
