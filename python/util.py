@@ -5,7 +5,6 @@ from typing import Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-import cupy as cp
 from PIL import Image, ImageChops
 from PIL.Image import BILINEAR
 from scipy import spatial
@@ -136,7 +135,7 @@ def make_fig(image, blobs=None, title=None, dpi=96):
         dims = [0.0, 0.0, 1.0, 0.95]
     ax = fig.add_axes(dims, yticks=[], xticks=[], frame_on=False)
     ax.imshow(image, cmap="gray")
-    ax.set_title(title, fontsize=50)
+    ax.set_title(title, fontsize=20)
     if blobs is not None:
         for y, x, r in blobs:
             c = plt.Circle((x, y), r, color="red", linewidth=1, fill=False)
@@ -162,3 +161,25 @@ def stretch_composite_histogram(image: np.ndarray, saturation_pct=0.35):
     return exposure.rescale_intensity(
         image, in_range=(bin_edges[h_min_idx], bin_edges[h_max_idx]), out_range="image"
     )
+
+
+def get_sigmas(
+    img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate
+) -> np.ndarray:
+    # calculate sigmas (corresponding to radii)
+    sigmas = np.linspace(
+        min_sigma,
+        max_sigma
+        + (max_sigma - min_sigma)
+        / (n_sigma_bins - 1),  # go one increment higher so that we include max_sigma
+        n_sigma_bins + 1,
+    )
+
+    max_radius = int(truncate * max(sigmas) + 0.5)
+    assert max_radius < img_h // 2 and max_radius < img_w // 2
+    return sigmas
+
+
+def display_slices(stack):
+    for s in stack:
+        make_fig(s.get()).show()

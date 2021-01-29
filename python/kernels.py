@@ -67,6 +67,7 @@ def componentwise_mult_numba(single_in, batch_in, out, batch_size, rows, cols):
 def cupy_mult(kernel_freqs, img_freqs):
     return kernel_freqs * img_freqs
 
+
 def gaussian_kernel(width: int = 21, sigma: int = 3, dim: int = 2) -> np.ndarray:
     """Gaussian kernel
     Parameters
@@ -97,6 +98,7 @@ def gaussian_kernel(width: int = 21, sigma: int = 3, dim: int = 2) -> np.ndarray
     return kernel / np.sum(kernel)
 
 
+# TODO(max): this should be created on different GPUs
 def create_embedded_kernel(
     sigmas,
     height,
@@ -118,7 +120,7 @@ def create_embedded_kernel(
 
     # roll so that final images don't need to be rolled
     # imagine convolving with a centered dirac delta - you'll induce a shift
-    kernel = np.roll(kernel, (height//2, width//2), axis=(-2, -1))
+    kernel = np.roll(kernel, (height // 2, width // 2), axis=(-2, -1))
     return cp.asarray(kernel)
 
 
@@ -140,3 +142,18 @@ def max_pool_3d(
     out = cp.empty((1, 1) + inp.shape, dtype=inp.dtype)
     pooling_forward(inp[cp.newaxis, cp.newaxis, :], out, size, stride, pad, mode)
     return out.squeeze()
+
+
+def get_local_maxima(dog_images, sigmas, threshold):
+    local_maxima = max_pool_3d(dog_images)
+    mask = (local_maxima == dog_images) & (dog_images > threshold)
+    assert mask.any(), "no maxima - that's bad"
+    local_maxima = local_maxima[mask]
+    coords = np.asarray(mask.get().nonzero()).T
+    # translate final column of cds, which contains the index of the
+    # sigma that produced the maximum intensity value, into the sigma
+    sigmas_of_peaks = sigmas[coords[:, 0]]
+    # Remove sigma index and replace with sigmas
+    blob_params = np.hstack([coords[:, 1:], sigmas_of_peaks[np.newaxis].T])
+    print(f"number blobs {len(blob_params)}")
+    return blob_params, local_maxima
