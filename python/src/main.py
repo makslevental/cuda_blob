@@ -4,8 +4,11 @@ from glob import glob
 
 import cupy as cp
 import numpy as np
+import pandas as pd
 from cupy.cuda.cufft import CUFFT_FORWARD
 from mpi4py import MPI
+
+from src.plots import plot_focus_res
 
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
@@ -19,7 +22,6 @@ from kernels import (
 from util import (
     load_img,
     prune_blobs,
-    make_fig,
     stretch_composite_histogram,
     get_sigmas,
 )
@@ -149,7 +151,11 @@ def single_gpu(
 def main():
     # fp = "/home/max/dev_projects/cuda_blob/data/S_000_1752450056/Tile_r1-c1_S_000_1752450056.tif"
     # fp = "/home/max/dev_projects/cuda_blob/python/tests/simulation.png"
-    for img_fp in glob("/home/max/dev_projects/cuda_blob/data/*/*/*.tif")[:10]:
+    # for img_fp in glob("/home/max/dev_projects/cuda_blob/data/*/*/*.tif")[:10]:
+    df = pd.read_csv("/home/max/dev_projects/cuda_blob/python/tests/image_focus.csv")
+    for img_fp in glob(
+        "/home/max/dev_projects/mouse_brain_data/focus_series/*/*/*.tif"
+    ):
         section_name = os.path.split(os.path.split(img_fp)[0])[1]
         img = load_img(img_fp, resize=(1024, 1024))
         # make_fig(img, title=f"{section_name} loaded image").savefig(
@@ -159,7 +165,7 @@ def main():
         # make_fig(img, title=f"{section_name} stretched image").savefig(
         #     f"/home/max/dev_projects/cuda_blob/data/results/{section_name} stretched image.png"
         # )
-        blobs = multi_gpu(img, n_sigma_bins=29, max_sigma=30)
+        blobs = single_gpu(img, n_sigma_bins=29, max_sigma=30)
         # make_hist(
         #     blobs[:, 2], title=f"{section_name} hist #blobs {len(blobs)}"
         # ).savefig(
@@ -169,10 +175,15 @@ def main():
         #     f"/home/max/dev_projects/cuda_blob/data/results/{section_name} blobs #blobs {len(blobs)}.png"
         # )
         if rank == 0:
-            make_fig(
-                img, blobs, title=f"{section_name} blobs #blobs {len(blobs)}"
-            ).show()
+            focus = df[df["image name"] == int(section_name[-4:])][
+                "focal depth (mm)"
+            ].values[0]
+            print(f"focus {focus}")
+            # make_fig(
+            #     img, blobs, title=f"{section_name} blobs #blobs {len(blobs)} focus {focus}"
+            # ).show()
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    plot_focus_res()

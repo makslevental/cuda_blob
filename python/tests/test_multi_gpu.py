@@ -2,14 +2,15 @@ import unittest
 
 import cupy as cp
 import numpy as np
+from cupyx.scipy.fftpack import get_fft_plan
 from mpi4py import MPI
+
+from src.ffts import get_fft
+from src.util import print_nd_array
 
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
 rank = comm.Get_rank()
-
-from ffts import get_fft
-from util import print_nd_array
 
 
 # import pydevd_pycharm
@@ -70,7 +71,8 @@ class MyTestCase(unittest.TestCase):
 
         recv_kernel = cp.empty((self.b // size, self.h, self.w), dtype="f")
         comm.Scatter(kernel, recv_kernel, root=0)
-        kernel_freqs = get_fft(recv_kernel)
+        kernel_forward_plan = get_fft_plan(recv_kernel, axes=(-2, -1), value_type="R2C")
+        kernel_freqs = get_fft(recv_kernel, kernel_forward_plan)
 
         kernel_freqs_np = np.fft.rfft2(kernels[rank], axes=(-2, -1), norm="ortho")
 
@@ -97,7 +99,8 @@ class MyTestCase(unittest.TestCase):
 
         recv_kernel = cp.empty((self.b // size, self.h, self.w), dtype="f")
         comm.Scatter(kernel, recv_kernel, root=0)
-        kernel_freqs = get_fft(recv_kernel)
+        kernel_forward_plan = get_fft_plan(recv_kernel, axes=(-2, -1), value_type="R2C")
+        kernel_freqs = get_fft(recv_kernel, kernel_forward_plan)
 
         recv_kernel_freqs = None
         if rank == 0:

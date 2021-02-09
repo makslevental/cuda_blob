@@ -2,15 +2,12 @@ import unittest
 
 import cupy as cp
 import numpy as np
+from cupyx.scipy.fftpack import get_fft_plan
 
-from cuda_profiling import GPUTimer
-from ffts import get_fft, get_inverse_fft
-from kernels import (
-    componentwise_mult_raw_kernel,
-    componentwise_mult_numba_depr,
-    componentwise_mult_numba,
-)
-from util import print_nd_array
+from src.cuda_profiling import GPUTimer
+from src.ffts import get_fft, get_inverse_fft
+from src.kernels import componentwise_mult_raw_kernel, componentwise_mult_numba_depr, componentwise_mult_numba
+from src.util import print_nd_array
 
 
 class MyTestCase(unittest.TestCase):
@@ -23,8 +20,10 @@ class MyTestCase(unittest.TestCase):
                 (self.b, self.h, self.w)
             )
 
-            kernel_freqs = get_fft(kernel)
-            out = get_inverse_fft(kernel_freqs)
+            kernel_forward_plan = get_fft_plan(kernel, axes=(-2, -1), value_type="R2C")
+            kernel_freqs = get_fft(kernel, kernel_forward_plan)
+            kernel_inverse_plan = get_fft_plan(kernel_freqs, axes=(-2, -1), value_type="C2R")
+            out = get_inverse_fft(kernel_freqs, kernel_inverse_plan)
 
             try:
                 self.assertTrue(cp.allclose(kernel, out))
@@ -42,7 +41,8 @@ class MyTestCase(unittest.TestCase):
             kernel = cp.arange(self.b * self.h * self.w).reshape(
                 (self.b, self.h, self.w)
             )
-            kernel_freqs = get_fft(kernel)
+            kernel_forward_plan = get_fft_plan(kernel, axes=(-2, -1), value_type="R2C")
+            kernel_freqs = get_fft(kernel, kernel_forward_plan)
 
             kernel_np = np.arange(self.b * self.h * self.w).reshape(
                 (self.b, self.h, self.w)

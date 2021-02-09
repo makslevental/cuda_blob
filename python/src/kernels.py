@@ -147,7 +147,7 @@ def max_pool_3d(
 def get_local_maxima(dog_images, sigmas, threshold):
     local_maxima = max_pool_3d(dog_images)
     mask = (local_maxima == dog_images) & (dog_images > threshold)
-    assert mask.any(), "no maxima - that's bad"
+    assert mask.any(), f"no maxima - that's bad, {cp.min(dog_images)}, {cp.max(dog_images)}"
     local_maxima = local_maxima[mask]
     coords = np.asarray(mask.get().nonzero()).T
     # translate final column of cds, which contains the index of the
