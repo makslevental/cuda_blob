@@ -24,6 +24,7 @@ from util import (
     prune_blobs,
     stretch_composite_histogram,
     get_sigmas,
+    make_fig_square,
 )
 
 
@@ -105,7 +106,7 @@ def single_gpu(
     truncate: float = 4.0,
     threshold: float = 0.0001,
     prune: bool = True,
-    overlap: float = 0.5,
+    overlap_prune: float = 0.5,
     gpu_device: int = 0,
 ):
     with cp.cuda.Device(gpu_device):
@@ -133,18 +134,15 @@ def single_gpu(
             cp.asarray(sigmas[:-1])[cp.newaxis, cp.newaxis, :].T
         )
 
-        blob_params, local_maxima = get_local_maxima(dog_images, sigmas, threshold)
+        blobs, local_maxima = get_local_maxima(dog_images, sigmas, threshold)
         if prune:
             blobs = prune_blobs(
-                blobs_array=blob_params,
-                overlap=overlap,
+                blobs_array=blobs,
+                overlap=overlap_prune,
                 local_maxima=local_maxima.get(),
                 sigma_dim=1,
             )
-        else:
-            blobs = blob_params
-
-        blobs[:, 2] = blobs[:, 2] * math.sqrt(2)
+            blobs[:, 2] = blobs[:, 2] * math.sqrt(2)
         return blobs
 
 
@@ -155,7 +153,7 @@ def main():
     df = pd.read_csv("/home/max/dev_projects/cuda_blob/python/tests/image_focus.csv")
     for img_fp in glob(
         "/home/max/dev_projects/mouse_brain_data/focus_series/*/*/*.tif"
-    ):
+    )[:10]:
         section_name = os.path.split(os.path.split(img_fp)[0])[1]
         img = load_img(img_fp, resize=(1024, 1024))
         # make_fig(img, title=f"{section_name} loaded image").savefig(
@@ -179,11 +177,13 @@ def main():
                 "focal depth (mm)"
             ].values[0]
             print(f"focus {focus}")
-            # make_fig(
-            #     img, blobs, title=f"{section_name} blobs #blobs {len(blobs)} focus {focus}"
-            # ).show()
+            make_fig_square(
+                img,
+                blobs,
+                title=f"{section_name} blobs #blobs {len(blobs)} focus {focus}",
+            ).show()
 
 
 if __name__ == "__main__":
-    # main()
-    plot_focus_res()
+    main()
+    # plot_focus_res()

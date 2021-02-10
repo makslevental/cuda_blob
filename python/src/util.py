@@ -143,6 +143,23 @@ def make_fig(image, blobs=None, title=None, dpi=96):
     return fig
 
 
+def make_fig_square(image, blobs=None, title=None, dpi=96):
+    px, py = image.shape
+    fig = plt.figure(figsize=(py / np.float(dpi), px / np.float(dpi)))
+    if title is None:
+        dims = [0.0, 0.0, 1.0, 1.0]
+    else:
+        dims = [0.0, 0.0, 1.0, 0.95]
+    ax = fig.add_axes(dims, yticks=[], xticks=[], frame_on=False)
+    ax.imshow(image, cmap="gray")
+    ax.set_title(title, fontsize=20)
+    if blobs is not None:
+        for y, x, r in blobs:
+            c = plt.Rectangle((x, y), r, r, color="red", linewidth=1, fill=False)
+            ax.add_patch(c)
+    return fig
+
+
 def make_hist(vals, title=None, use_log_scale=False, n_bins=256):
     fig, ax = plt.subplots(tight_layout=True)
     ax.hist(vals, bins=n_bins)
