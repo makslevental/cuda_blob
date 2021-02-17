@@ -1,4 +1,5 @@
 import ctypes
+from sys import stdout
 
 import py3nvml.py3nvml as nvml
 from cupy.cuda.device import Device
@@ -9,6 +10,7 @@ from cupy.cuda.runtime import (
     eventElapsedTime,
     memGetInfo,
 )
+from mpi4py import MPI
 
 _cudart = ctypes.CDLL("libcudart.so")
 
@@ -29,10 +31,11 @@ def cuda_profiler_stop():
 
 
 class GPUTimer:
-    def __init__(self, msg: str):
+    def __init__(self, msg: str, out=stdout):
         self._msg = msg
         self._start = eventCreate()
         self._stop = eventCreate()
+        self._out = out
 
     def start(self):
         eventRecord(self._start, 0)
@@ -50,7 +53,30 @@ class GPUTimer:
 
     def __exit__(self, type, value, traceback):
         self.stop()
-        print(f"{self._msg} time {self.elapsed_time():.3f}ms")
+        print(f"GPU {self._msg} time {self.elapsed_time():.3f}ms", file=self._out)
+
+class MPITimer:
+    def __init__(self, msg: str, out=stdout):
+        self._msg = msg
+        self._start = None
+        self._out = out
+
+    def start(self):
+        self._start = MPI.Wtime()
+
+    def stop(self):
+        self._stop = MPI.Wtime()
+
+    def elapsed_time(self):
+        return self._stop - self._start
+
+    def __enter__(self):
+        self.start()
+
+    def __exit__(self, type, value, traceback):
+        self.stop()
+        print(f"MPI {self._msg} time {self.elapsed_time():.3f}ms", file=self._out)
+
 
 
 def get_used_cuda_mem(device):

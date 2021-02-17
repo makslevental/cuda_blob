@@ -5,6 +5,8 @@ import numpy as np
 from cupy.cudnn import pooling_forward
 from numba import cuda
 
+from src.profiling import GPUTimer
+
 componentwise_mult_raw_kernel = cp.RawKernel(
     r"""
 extern "C" __global__ void componentwiseMatrixMul1vsBatchfloat2(
@@ -138,22 +140,22 @@ def max_pool_3d(
     inp: cp.ndarray, size=(3, 3, 3), stride=(1, 1, 1), mode=CUDNN_POOLING_MAX
 ) -> cp.ndarray:
     pad = tuple((s - 1) // 2 for s in size)
-    # pool = max_pooling_nd(Variable(inp[cp.newaxis, cp.newaxis, :, :]), 3, 1, 1)
     out = cp.empty((1, 1) + inp.shape, dtype=inp.dtype)
     pooling_forward(inp[cp.newaxis, cp.newaxis, :], out, size, stride, pad, mode)
     return out.squeeze()
 
 
+# TODO(max): convert back to cupy so i can time correctly
 def get_local_maxima(dog_images, sigmas, threshold):
     local_maxima = max_pool_3d(dog_images)
     mask = (local_maxima == dog_images) & (dog_images > threshold)
-    assert mask.any(), f"no maxima - that's bad, {cp.min(dog_images)}, {cp.max(dog_images)}"
+    # assert mask.any(), f"no maxima - that's bad, {cp.min(dog_images)}, {cp.max(dog_images)}"
     local_maxima = local_maxima[mask]
-    coords = np.asarray(mask.get().nonzero()).T
+    # nonzero is faster on gpu (duh)
+    coords = cp.asarray(mask.nonzero()).T.get()
     # translate final column of cds, which contains the index of the
     # sigma that produced the maximum intensity value, into the sigma
     sigmas_of_peaks = sigmas[coords[:, 0]]
     # Remove sigma index and replace with sigmas
-    blob_params = np.hstack([coords[:, 1:], sigmas_of_peaks[np.newaxis].T])
-    print(f"number blobs {len(blob_params)}")
+    blob_params = cp.hstack([coords[:, 1:], sigmas_of_peaks[np.newaxis].T])
     return blob_params, local_maxima

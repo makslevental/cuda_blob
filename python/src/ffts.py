@@ -48,8 +48,7 @@ def get_forward_plans(img, kernel, axes=(-2, -1)):
     return img_forward_plan, kernel_forward_plan
 
 
-def filter_imgs(img_freqs, kernel_freqs):
-    kernel_inverse_plan = get_fft_plan(kernel_freqs, axes=(-2, -1), value_type="C2R")
+def filter_imgs(img_freqs, kernel_freqs, kernel_inverse_plan):
     filtered_imgs_freqs = cp.empty_like(kernel_freqs, dtype=kernel_freqs.dtype)
     grid_block_dims = get_grid_block_dims(*filtered_imgs_freqs.shape)
     componentwise_mult_numba[grid_block_dims](

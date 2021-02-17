@@ -1,18 +1,22 @@
 import math
 import os
+import time
 from glob import glob
 
 import cupy as cp
 import numpy as np
 import pandas as pd
 from cupy.cuda.cufft import CUFFT_FORWARD
+from cupyx.scipy.fftpack import get_fft_plan
 from mpi4py import MPI
 
+from src.profiling import GPUTimer
 from src.plots import plot_focus_res
 
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
 rank = comm.Get_rank()
+cp.cuda.Device(rank).use()
 
 from ffts import get_fft, get_forward_plans, filter_imgs
 from kernels import (
@@ -28,26 +32,10 @@ from util import (
 )
 
 
-def multi_gpu(
-    img: cp.ndarray,
-    min_sigma: int = 1,
-    max_sigma: int = 10,
-    n_sigma_bins: int = 10,
-    truncate: float = 4.0,
-    threshold: float = 0.0001,
-    prune: bool = True,
-    overlap: float = 0.5,
-):
-    # move img to GPU
-    img = cp.asarray(img)
-    img_h, img_w = img.shape
-    # scatter img
-    recv_img = cp.empty(img.shape, dtype="f")
-    comm.Scatter(img, recv_img, root=0)
-
+def scatter_kernel(img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate):
     if rank == 0:
         sigmas = get_sigmas(img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate)
-        assert len(sigmas) % size == 0, f"len(sigmas) {len(sigmas)} size {size}"
+        # assert len(sigmas) % size == 0, f"len(sigmas) {len(sigmas)} size {size}"
     else:
         sigmas = np.empty(n_sigma_bins + 1)
 
@@ -58,30 +46,78 @@ def multi_gpu(
     kernel = create_embedded_kernel(recv_sigmas, img_h, img_w, truncate).astype(
         dtype="f"
     )
+    return kernel, sigmas
 
-    img_forward_plan, kernel_forward_plan = get_forward_plans(recv_img, kernel)
-    img_freqs = get_fft(recv_img, img_forward_plan)
 
-    kernel_freqs = get_fft(kernel, kernel_forward_plan)
-    assert (
-        img_freqs.shape[-2:] == kernel_freqs.shape[-2:]
-    ), f"img_freqs {img_freqs.shape} kernel_freqs {kernel_freqs.shape}"
+KERNEL = None
+KERNEL_FREQS = None
+IMG_FORWARD_PLAN = None
+KERNEL_FORWARD_PLAN = None
+KERNEL_INVERSE_PLAN = None
+SIGMAS = None
 
-    filtered_imgs = filter_imgs(img_freqs, kernel_freqs)
-    assert (
-        kernel.shape == filtered_imgs.shape
-    ), f"kernel shape {kernel.shape} filtered images shape {filtered_imgs.shape}"
+
+def multi_gpu(
+    img: cp.ndarray,
+    min_sigma: int = 1,
+    max_sigma: int = 10,
+    n_sigma_bins: int = 10,
+    truncate: float = 4.0,
+    threshold: float = 0.0001,
+    prune: bool = True,
+    overlap: float = 0.5,
+):
+    global KERNEL, KERNEL_FREQS, IMG_FORWARD_PLAN, KERNEL_FORWARD_PLAN, KERNEL_INVERSE_PLAN, SIGMAS
+    # move img to GPU
+    img = cp.asarray(img)
+    img_h, img_w = img.shape
+
+    if any(
+        [
+            x is None
+            for x in [
+                KERNEL,
+                KERNEL_FREQS,
+                IMG_FORWARD_PLAN,
+                KERNEL_FORWARD_PLAN,
+                KERNEL_INVERSE_PLAN,
+                SIGMAS,
+            ]
+        ]
+    ):
+        KERNEL, SIGMAS = scatter_kernel(
+            img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate
+        )
+        IMG_FORWARD_PLAN, KERNEL_FORWARD_PLAN = get_forward_plans(img, KERNEL)
+        KERNEL_FREQS = get_fft(KERNEL, KERNEL_FORWARD_PLAN)
+        KERNEL_INVERSE_PLAN = get_fft_plan(
+            KERNEL_FREQS, axes=(-2, -1), value_type="C2R"
+        )
+
+    # comm.Barrier()
+    img_freqs = get_fft(img, IMG_FORWARD_PLAN)
+
+    # assert (
+    #     img_freqs.shape[-2:] == KERNEL_FREQS.shape[-2:]
+    # ), f"img_freqs {img_freqs.shape} kernel_freqs {KERNEL_FREQS.shape}"
+
+    # comm.Barrier()
+    filtered_imgs = filter_imgs(img_freqs, KERNEL_FREQS, KERNEL_INVERSE_PLAN)
+    # assert (
+    #     KERNEL.shape == filtered_imgs.shape
+    # ), f"kernel shape {KERNEL.shape} filtered images shape {filtered_imgs.shape}"
 
     # gather to root
     recv_filtered_imgs = cp.empty((n_sigma_bins + 1, img_h, img_w), dtype="f")
     comm.Gather(filtered_imgs, recv_filtered_imgs, root=0)
 
+    # TODO(max): tree based diffs and local_max
     if rank == 0:
         dog_images = (recv_filtered_imgs[:-1] - recv_filtered_imgs[1:]) * (
-            cp.asarray(sigmas[:-1])[cp.newaxis, cp.newaxis, :].T
+            cp.asarray(SIGMAS[:-1])[cp.newaxis, cp.newaxis, :].T
         )
 
-        blob_params, local_maxima = get_local_maxima(dog_images, sigmas, threshold)
+        blob_params, local_maxima = get_local_maxima(dog_images, SIGMAS, threshold)
         if prune:
             blobs = prune_blobs(
                 blobs_array=blob_params,
@@ -98,6 +134,7 @@ def multi_gpu(
         return None
 
 
+# TODO(max): fix single gpu to use cached stuff
 def single_gpu(
     img: cp.ndarray,
     min_sigma: int = 1,
@@ -107,43 +144,58 @@ def single_gpu(
     threshold: float = 0.0001,
     prune: bool = True,
     overlap_prune: float = 0.5,
-    gpu_device: int = 0,
 ):
-    with cp.cuda.Device(gpu_device):
-        # move img to GPU
-        img = cp.asarray(img)
-        img_h, img_w = img.shape
+    global KERNEL, KERNEL_FREQS, IMG_FORWARD_PLAN, KERNEL_FORWARD_PLAN, KERNEL_INVERSE_PLAN, SIGMAS
+    # move img to GPU
+    img = cp.asarray(img)
+    img_h, img_w = img.shape
 
-        sigmas = get_sigmas(img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate)
-        kernel = create_embedded_kernel(sigmas, img_h, img_w, truncate).astype(
+    if any(
+        [
+            x is None
+            for x in [
+                KERNEL,
+                KERNEL_FREQS,
+                IMG_FORWARD_PLAN,
+                KERNEL_FORWARD_PLAN,
+                KERNEL_INVERSE_PLAN,
+                SIGMAS,
+            ]
+        ]
+    ):
+        SIGMAS = get_sigmas(img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate)
+        KERNEL = create_embedded_kernel(SIGMAS, img_h, img_w, truncate).astype(
             dtype="f"
         )
-
-        img_forward_plan, kernel_forward_plan = get_forward_plans(img, kernel)
-        img_freqs = get_fft(img, img_forward_plan)
-        kernel_freqs = get_fft(kernel, kernel_forward_plan)
-        assert (
-            img_freqs.shape[-2:] == kernel_freqs.shape[-2:]
-        ), f"img_freqs {img_freqs.shape} kernel_freqs {kernel_freqs.shape}"
-
-        filtered_imgs = filter_imgs(img_freqs, kernel_freqs)
-        assert (
-            kernel.shape == filtered_imgs.shape
-        ), f"kernel shape {kernel.shape} filtered images shape {filtered_imgs.shape}"
-        dog_images = (filtered_imgs[:-1] - filtered_imgs[1:]) * (
-            cp.asarray(sigmas[:-1])[cp.newaxis, cp.newaxis, :].T
+        IMG_FORWARD_PLAN, KERNEL_FORWARD_PLAN = get_forward_plans(img, KERNEL)
+        KERNEL_FREQS = get_fft(KERNEL, KERNEL_FORWARD_PLAN)
+        KERNEL_INVERSE_PLAN = get_fft_plan(
+            KERNEL_FREQS, axes=(-2, -1), value_type="C2R"
         )
 
-        blobs, local_maxima = get_local_maxima(dog_images, sigmas, threshold)
-        if prune:
-            blobs = prune_blobs(
-                blobs_array=blobs,
-                overlap=overlap_prune,
-                local_maxima=local_maxima.get(),
-                sigma_dim=1,
-            )
-            blobs[:, 2] = blobs[:, 2] * math.sqrt(2)
-        return blobs
+    img_freqs = get_fft(img, IMG_FORWARD_PLAN)
+    # assert (
+    #     img_freqs.shape[-2:] == KERNEL_FREQS.shape[-2:]
+    # ), f"img_freqs {img_freqs.shape} KERNEL_FREQS {KERNEL_FREQS.shape}"
+
+    filtered_imgs = filter_imgs(img_freqs, KERNEL_FREQS, KERNEL_INVERSE_PLAN)
+    # assert (
+    #     KERNEL.shape == filtered_imgs.shape
+    # ), f"kernel shape {KERNEL.shape} filtered images shape {filtered_imgs.shape}"
+    dog_images = (filtered_imgs[:-1] - filtered_imgs[1:]) * (
+        cp.asarray(SIGMAS[:-1])[cp.newaxis, cp.newaxis, :].T
+    )
+
+    blobs, local_maxima = get_local_maxima(dog_images, SIGMAS, threshold)
+    if prune:
+        blobs = prune_blobs(
+            blobs_array=blobs,
+            overlap=overlap_prune,
+            local_maxima=local_maxima.get(),
+            sigma_dim=1,
+        )
+        blobs[:, 2] = blobs[:, 2] * math.sqrt(2)
+    return blobs
 
 
 def main():
@@ -153,17 +205,25 @@ def main():
     df = pd.read_csv("/home/max/dev_projects/cuda_blob/python/tests/image_focus.csv")
     for img_fp in glob(
         "/home/max/dev_projects/mouse_brain_data/focus_series/*/*/*.tif"
-    )[:10]:
+    ):
         section_name = os.path.split(os.path.split(img_fp)[0])[1]
         img = load_img(img_fp, resize=(1024, 1024))
         # make_fig(img, title=f"{section_name} loaded image").savefig(
         #     f"/home/max/dev_projects/cuda_blob/data/results/{section_name} loaded image.png"
         # )
-        img = stretch_composite_histogram(img)
+        # img = stretch_composite_histogram(img)
         # make_fig(img, title=f"{section_name} stretched image").savefig(
         #     f"/home/max/dev_projects/cuda_blob/data/results/{section_name} stretched image.png"
         # )
-        blobs = single_gpu(img, n_sigma_bins=29, max_sigma=30)
+        # minus one is since we had one more inside routine but we want total to be divisible by size
+        n_sigma_bins = math.ceil(29 / size) * size - 1
+        if size > 1:
+            blobs = multi_gpu(img, n_sigma_bins=n_sigma_bins, max_sigma=30, prune=False)
+        else:
+            blobs = single_gpu(
+                img, n_sigma_bins=n_sigma_bins, max_sigma=30, prune=False
+            )
+
         # make_hist(
         #     blobs[:, 2], title=f"{section_name} hist #blobs {len(blobs)}"
         # ).savefig(
@@ -172,16 +232,16 @@ def main():
         # make_fig(img, blobs, title=f"{section_name} blobs #blobs {len(blobs)}").savefig(
         #     f"/home/max/dev_projects/cuda_blob/data/results/{section_name} blobs #blobs {len(blobs)}.png"
         # )
-        if rank == 0:
-            focus = df[df["image name"] == int(section_name[-4:])][
-                "focal depth (mm)"
-            ].values[0]
-            print(f"focus {focus}")
-            make_fig_square(
-                img,
-                blobs,
-                title=f"{section_name} blobs #blobs {len(blobs)} focus {focus}",
-            ).show()
+        # if rank == 0:
+        #     focus = df[df["image name"] == int(section_name[-4:])][
+        #         "focal depth (mm)"
+        #     ].values[0]
+        #     print(f"focus {focus}")
+        #     make_fig_square(
+        #         img,
+        #         blobs,
+        #         title=f"{section_name} blobs #blobs {len(blobs)} focus {focus}",
+        #     ).show()
 
 
 if __name__ == "__main__":

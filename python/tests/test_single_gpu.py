@@ -4,7 +4,7 @@ import cupy as cp
 import numpy as np
 from cupyx.scipy.fftpack import get_fft_plan
 
-from src.cuda_profiling import GPUTimer
+from src.profiling import GPUTimer
 from src.ffts import get_fft, get_inverse_fft
 from src.kernels import componentwise_mult_raw_kernel, componentwise_mult_numba_depr, componentwise_mult_numba
 from src.util import print_nd_array
@@ -165,5 +165,4 @@ class MyTestCase(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    print()
-    # unittest.main()
+    unittest.main()
