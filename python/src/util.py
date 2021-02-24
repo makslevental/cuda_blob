@@ -1,15 +1,20 @@
 import collections
 import math
 from bisect import bisect_left
+from functools import lru_cache
 from typing import Tuple
 
+import cupy as cp
 import matplotlib.pyplot as plt
 import numpy as np
+import tifffile
+import xmltodict
 from PIL import Image, ImageChops
-from PIL.Image import BILINEAR
 from scipy import spatial
-from skimage import exposure
 from skimage.feature.blob import _blob_overlap
+
+from src.kernels import resize_images_interpolate_bilinear
+from src.profiling import GPUTimer
 
 
 def nd_to_text(A, w=None):
@@ -47,31 +52,130 @@ def print_nd_array(arr: np.ndarray, round=3):
     print(nd_to_text(arr.round(round)))
 
 
+def read_tiff_metadata(fp):
+    img = tifffile.TiffFile(fp)
+    fibicsXML = img.pages.pages[0].tags.get(51023)
+    assert fibicsXML.name == "FibicsXML"
+    xml = fibicsXML.value
+    xml_dict = xmltodict.parse(xml)["Fibics"]
+    return float(xml_dict["Scan"]["Focus"])
+
+
 def trim(img) -> Image:
     bg = Image.new(img.mode, img.size, img.getpixel((0, 0)))
     diff = ImageChops.difference(img, bg)
     diff = ImageChops.add(diff, diff, scale=2.0, offset=-100)
     bbox = diff.getbbox()
+    print(bbox)
     if bbox:
         return img.crop(bbox)
     else:
         return img
 
 
-def load_img(fp, resize=None) -> np.ndarray:
-    # TODO(max): pinned memory?
-    # convert to I so that there's no clipping (float for CUDA)
-    img = trim(Image.open(fp)).convert("I").convert("F")
-    if resize is not None:
-        img = img.resize(resize, resample=BILINEAR)
+PINNED_MEMORY_POOL = cp.cuda.PinnedMemoryPool()
+cp.cuda.set_pinned_memory_allocator(PINNED_MEMORY_POOL.malloc)
 
-    return np.array(img) / 255.0
+
+def pin_memory(array):
+    mem = cp.cuda.alloc_pinned_memory(array.nbytes)
+    ret = np.frombuffer(mem, array.dtype, array.size).reshape(array.shape)
+    ret[...] = array
+    return ret
+
+
+PINNED_ARR = None
+
+
+# (426, 474, 4646, 5239)
+def load_img_to_gpu(fp, resize=(1024, 1024), bbox=(426, 474, 4000, 4000)) -> cp.ndarray:
+    global PINNED_ARR
+
+    # TODO(max): pinned memory?
+    with GPUTimer("open"):
+        # img = Image.open(fp)
+        img = tifffile.imread(fp)
+
+    with GPUTimer("crop"):
+        # img = trim(img)
+        left, upper, right, lower = bbox
+        img = img[upper : lower + 1, left : right + 1]
+
+    with GPUTimer("pin memory"):
+        if PINNED_ARR is None:
+            PINNED_ARR = pin_memory(img)
+        PINNED_ARR[...] = img
+        img = PINNED_ARR
+
+    with GPUTimer("copy img to gpu"):
+        img = cp.array(img) / cp.float32(255.0)
+
+    if resize is not None:
+        with GPUTimer("resize"):
+            img = gpu_resize(img, resize)
+
+    return img
+
+
+# https://github.com/chainer/chainer/blob/v7.7.0/chainer/functions/array/resize_images.py#L174
+@lru_cache(maxsize=None)
+def compute_indices_and_weights(out_size, in_size, mode, align_corners):
+    out_H, out_W = out_size
+    H, W = in_size
+    if mode == "bilinear":
+        if align_corners:
+            v = cp.linspace(0, H - 1, num=out_H, dtype=cp.float)
+            u = cp.linspace(0, W - 1, num=out_W, dtype=cp.float)
+        else:
+            y_scale = H / out_H
+            x_scale = W / out_W
+            v = (cp.arange(out_H, dtype=cp.float) + 0.5) * y_scale - 0.5
+            v = cp.maximum(v, 0)
+            u = (cp.arange(out_W, dtype=cp.float) + 0.5) * x_scale - 0.5
+            u = cp.maximum(u, 0)
+        vw, v = cp.modf(v)
+        uw, u = cp.modf(u)
+    elif mode == "nearest":
+        y_scale = H / out_H
+        x_scale = W / out_W
+        v = cp.minimum(cp.floor(cp.arange(out_H, dtype=cp.float) * y_scale), H - 1)
+        u = cp.minimum(cp.floor(cp.arange(out_W, dtype=cp.float) * x_scale), W - 1)
+        vw = cp.zeros_like(v)
+        uw = cp.zeros_like(u)
+    return v, u, vw, uw
+
+
+# https://github.com/chainer/chainer/blob/v7.7.0/chainer/functions/array/resize_images.py#L82
+def interpolate_bilinear_gpu(x, v, u, vw, uw):
+    H, W = x.shape
+    out_H, out_W = v.shape
+    y = cp.empty((out_H, out_W), dtype=x.dtype)
+
+    resize_images_interpolate_bilinear(x, v, u, vw, uw, H, W, out_H * out_W, y)
+    return y
+
+
+# https://github.com/chainer/chainer/blob/v7.7.0/chainer/functions/array/resize_images.py#L224
+def gpu_resize(
+    img: cp.ndarray, resize=(1024, 1024), mode="bilinear", align_corners=True
+):
+    v, u, vw, uw = compute_indices_and_weights(resize, img.shape, mode, align_corners)
+    v = v.astype(cp.intp)
+    u = u.astype(cp.intp)
+    vw = vw.astype(img.dtype)
+    uw = uw.astype(img.dtype)
+
+    v, u, vw, uw = cp.broadcast_arrays(v[:, None], u[None, :], vw[:, None], uw[None, :])
+
+    y = interpolate_bilinear_gpu(img, v, u, vw, uw)
+    return y
 
 
 dim2 = collections.namedtuple("dim2", "x y")
 dim3 = collections.namedtuple("dim3", "x y z")
 
 
+@lru_cache(maxsize=None)
 def get_grid_block_dims(batch_size, img_h, img_w, num_threads=32) -> Tuple[dim3, dim2]:
     n_blocks_h, n_blocks_w = img_h // num_threads, img_w // num_threads
     if n_blocks_w % batch_size or n_blocks_w == 0:
@@ -169,17 +273,22 @@ def make_hist(vals, title=None, use_log_scale=False, n_bins=256):
     return fig
 
 
-def stretch_composite_histogram(image: np.ndarray, saturation_pct=0.35):
-    bin_density, bin_edges = np.histogram(image, bins=256, density=True)
+def stretch_composite_histogram(image: cp.ndarray, saturation_pct=0.35):
+    bin_density, bin_edges = cp.histogram(image, bins=256, density=True)
     bin_density /= bin_density.sum()
-    bin_cdf = np.cumsum(bin_density)
+    bin_cdf = cp.cumsum(bin_density)
     h_min_idx = bisect_left(bin_cdf, saturation_pct // 100)
     h_max_idx = bisect_left(bin_cdf, 1 - saturation_pct / 100)
-    return exposure.rescale_intensity(
-        image, in_range=(bin_edges[h_min_idx], bin_edges[h_max_idx]), out_range="image"
-    )
+
+    imin, imax = bin_edges[h_min_idx], bin_edges[h_max_idx]
+    omin, omax = map(cp.float32, (0.0, 1.0))
+    image = cp.clip(image, imin, imax)
+    image = (image - imin) / (imax - imin)
+
+    return image * (omax - omin) + omin
 
 
+@lru_cache(maxsize=None)
 def get_sigmas(
     img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate
 ) -> np.ndarray:

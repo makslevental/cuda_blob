@@ -4,9 +4,12 @@ from matplotlib import pyplot as plt
 from scipy.optimize import curve_fit
 
 
-def plot_focus_res():
-    df = pd.read_csv("/home/max/dev_projects/cuda_blob/python/tests/image_focus_res.csv")
+def plot_focus_res(df):
+    # df = pd.read_csv("/home/max/dev_projects/cuda_blob/python/tests/image_focus_res.csv")
+    df['focus'] = df['focus']*1000
+    df = df[df.focus <= 5.5]
     x = np.abs(df["focus"] - 5.399)
+    # x = np.abs(df["focus"])
     y = df["blobs"]
     plt.scatter(x, y)
     plt.xlabel("|focus_depth - 5.399|")

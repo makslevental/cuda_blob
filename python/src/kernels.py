@@ -1,4 +1,5 @@
 import numbers
+from functools import lru_cache
 
 import cupy as cp
 import numpy as np
@@ -70,6 +71,7 @@ def cupy_mult(kernel_freqs, img_freqs):
     return kernel_freqs * img_freqs
 
 
+@lru_cache(maxsize=None)
 def gaussian_kernel(width: int = 21, sigma: int = 3, dim: int = 2) -> np.ndarray:
     """Gaussian kernel
     Parameters
@@ -129,14 +131,7 @@ def create_embedded_kernel(
 CUDNN_POOLING_MAX = 0
 
 
-# import cupy.cudnn
-#
-# cudnn = cupy.cudnn  # type: tp.Optional[types.ModuleType]
-# libcudnn = cupy.cupy.cuda.cudnn  # type: tp.Any # NOQA
-# cudnn._py_cudnn
-
-
-def max_pool_3d(
+def max_pool_nd(
     inp: cp.ndarray, size=(3, 3, 3), stride=(1, 1, 1), mode=CUDNN_POOLING_MAX
 ) -> cp.ndarray:
     pad = tuple((s - 1) // 2 for s in size)
@@ -147,15 +142,46 @@ def max_pool_3d(
 
 # TODO(max): convert back to cupy so i can time correctly
 def get_local_maxima(dog_images, sigmas, threshold):
-    local_maxima = max_pool_3d(dog_images)
-    mask = (local_maxima == dog_images) & (dog_images > threshold)
-    # assert mask.any(), f"no maxima - that's bad, {cp.min(dog_images)}, {cp.max(dog_images)}"
-    local_maxima = local_maxima[mask]
-    # nonzero is faster on gpu (duh)
-    coords = cp.asarray(mask.nonzero()).T.get()
-    # translate final column of cds, which contains the index of the
-    # sigma that produced the maximum intensity value, into the sigma
-    sigmas_of_peaks = sigmas[coords[:, 0]]
-    # Remove sigma index and replace with sigmas
-    blob_params = cp.hstack([coords[:, 1:], sigmas_of_peaks[np.newaxis].T])
-    return blob_params, local_maxima
+    with GPUTimer("argmax"):
+        idx = dog_images.argmax(axis=0)
+        m, n = dog_images.shape[1:]
+        I, J = cp.ogrid[:m, :n]
+        max_values = dog_images[idx, I, J]
+        max_values[max_values < threshold] = 0.0
+        local_maxima = max_pool_nd(max_values, size=(3, 3), stride=(1, 1))
+        mask = (local_maxima == max_values) & (
+            max_values > cp.float32(0.0)
+        )
+        local_maxima = local_maxima[mask]
+        coords = idx[mask]
+        blobs = cp.asarray(
+            (*mask.nonzero(), cp.asarray(sigmas)[coords])
+        ).T
+    return blobs, local_maxima
+
+
+resize_images_interpolate_bilinear = cp.ElementwiseKernel(
+    "raw T x, S v, S u, T vw, T uw, S H, S W, S outsize",
+    "T y",
+    """
+        // indices
+        S v0 = v;
+        S v1 = min(v + 1, (S)(H - 1));
+        S u0 = u;
+        S u1 = min(u + 1, (S)(W - 1));
+        // weights
+        T w0 = (1 - vw) * (1 - uw);
+        T w1 = (1 - vw) * uw;
+        T w2 = vw * (1 - uw);
+        T w3 = vw * uw;
+        // fetch
+        S offset = i / outsize * H * W;
+        T px0 = x[offset + v0 * W + u0];
+        T px1 = x[offset + v0 * W + u1];
+        T px2 = x[offset + v1 * W + u0];
+        T px3 = x[offset + v1 * W + u1];
+        // interpolate
+        y = (w0 * px0 + w1 * px1) + (w2 * px2 + w3 * px3);
+        """,
+    "resize_images_interpolate_bilinear",
+)
