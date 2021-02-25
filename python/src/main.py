@@ -222,7 +222,7 @@ def main():
     focus, n_blobs = [], []
 
     for img_fp in glob(
-        "/home/max/dev_projects/mouse_brain_data/*/*/*/*.tif"
+        "/home/max/dev_projects/mouse_brain_data/**/*.tif", recursive=True
     ):
         with GPUTimer("whole thing"):
             section_name = os.path.split(os.path.split(img_fp)[0])[1]
@@ -244,16 +244,16 @@ def main():
                         img, n_sigma_bins=n_sigma_bins, max_sigma=max_sigma, prune=False
                     )
             if blobs is not None:
+                foc, _ = read_tiff_metadata(img_fp)
                 n_blobs.append(len(blobs))
-                focus.append(read_tiff_metadata(img_fp))
+                focus.append(foc)
+                print(f"{img_fp}, {len(blobs)}, {foc}")
 
-        # if rank == 0:
-        #     make_fig_square(
-        #         img.get(),
-        #         blobs,
-        #     ).show()
-        # break
-
+        if rank == 0:
+            make_fig_square(
+                img.get(),
+                blobs,
+            ).show()
 
     plot_focus_res(pd.DataFrame({"blobs": n_blobs, "focus": focus}))
 

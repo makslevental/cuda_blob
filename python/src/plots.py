@@ -6,10 +6,10 @@ from scipy.optimize import curve_fit
 
 def plot_focus_res(df):
     # df = pd.read_csv("/home/max/dev_projects/cuda_blob/python/tests/image_focus_res.csv")
-    df['focus'] = df['focus']*1000
+    # df['focus'] = df['focus']*1000
     df = df[df.focus <= 5.5]
-    x = np.abs(df["focus"] - 5.399)
-    # x = np.abs(df["focus"])
+    # x = np.abs(df["focus"] - 5.399)
+    x = np.abs(df["focus"])
     y = df["blobs"]
     plt.scatter(x, y)
     plt.xlabel("|focus_depth - 5.399|")
@@ -21,7 +21,7 @@ def plot_focus_res(df):
     def func(x, a, b, c):
         return a * np.exp(-b * x) + c
 
-    popt, pcov = curve_fit(func, x, y)
+    popt, pcov = curve_fit(func, x, y, maxfev=10000)
     a,b,c = popt
 
     plt.plot(np.sort(x), func(np.sort(x), *popt), 'r-', label=f"#blobs $\\approx {a:.2f}e^{{-{b:.2f}x}} {c:.2f}$")

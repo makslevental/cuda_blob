@@ -58,7 +58,16 @@ def read_tiff_metadata(fp):
     assert fibicsXML.name == "FibicsXML"
     xml = fibicsXML.value
     xml_dict = xmltodict.parse(xml)["Fibics"]
-    return float(xml_dict["Scan"]["Focus"])
+    left, right, top, bottom = map(
+        int,
+        [
+            xml_dict["Image"]["BoundingBox.Left"],
+            xml_dict["Image"]["BoundingBox.Right"],
+            xml_dict["Image"]["BoundingBox.Top"],
+            xml_dict["Image"]["BoundingBox.Bottom"],
+        ],
+    )
+    return float(xml_dict["Scan"]["Focus"]), (left, right, top, bottom)
 
 
 def trim(img) -> Image:
@@ -88,7 +97,7 @@ PINNED_ARR = None
 
 
 # (426, 474, 4646, 5239)
-def load_img_to_gpu(fp, resize=(1024, 1024), bbox=(426, 474, 4000, 4000)) -> cp.ndarray:
+def load_img_to_gpu(fp, resize=(1024, 1024)) -> cp.ndarray:
     global PINNED_ARR
 
     # TODO(max): pinned memory?
@@ -96,13 +105,14 @@ def load_img_to_gpu(fp, resize=(1024, 1024), bbox=(426, 474, 4000, 4000)) -> cp.
         # img = Image.open(fp)
         img = tifffile.imread(fp)
 
+
     with GPUTimer("crop"):
         # img = trim(img)
-        left, upper, right, lower = bbox
+        _, (left, right, upper, lower) = read_tiff_metadata(fp)
         img = img[upper : lower + 1, left : right + 1]
 
     with GPUTimer("pin memory"):
-        if PINNED_ARR is None:
+        if PINNED_ARR is None or PINNED_ARR.shape != img.shape:
             PINNED_ARR = pin_memory(img)
         PINNED_ARR[...] = img
         img = PINNED_ARR
