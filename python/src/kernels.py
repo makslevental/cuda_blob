@@ -153,9 +153,15 @@ def get_local_maxima(dog_images, sigmas, threshold):
 
     local_maxima = max_pool_nd(max_values, size=(3, 3), stride=(1, 1))
     mask = (local_maxima == max_values) & (max_values > cp.float32(0.0))
+
+    if not mask.any():
+        return [], []
+
     local_maxima = local_maxima[mask]
     coords = idx[mask]
-    blobs = cp.asarray((*mask.nonzero(), cp.asarray(sigmas)[coords])).T
+    blobs = cp.asarray(
+        [t.astype(cp.float32) for t in (*mask.nonzero(), cp.asarray(sigmas)[coords])]
+    ).T
     return blobs, local_maxima
 
 
