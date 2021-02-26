@@ -12,6 +12,10 @@ from cupy.cuda.runtime import (
 )
 from mpi4py import MPI
 
+comm = MPI.COMM_WORLD
+size = comm.Get_size()
+rank = comm.Get_rank()
+
 _cudart = ctypes.CDLL("libcudart.so")
 
 
@@ -53,7 +57,9 @@ class GPUTimer:
 
     def __exit__(self, type, value, traceback):
         self.stop()
-        print(f"GPU {self._msg} time {self.elapsed_time():.3f}ms", file=self._out)
+        if rank == 0:
+            print(f"GPU {self._msg} time {self.elapsed_time():.3f}ms", file=self._out)
+
 
 class MPITimer:
     def __init__(self, msg: str, out=stdout):
@@ -76,7 +82,6 @@ class MPITimer:
     def __exit__(self, type, value, traceback):
         self.stop()
         print(f"MPI {self._msg} time {self.elapsed_time():.3f}ms", file=self._out)
-
 
 
 def get_used_cuda_mem(device):

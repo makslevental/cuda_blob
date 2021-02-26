@@ -126,6 +126,10 @@ def multi_gpu(
 
         with GPUTimer("local maxima"):
             blob_params, local_maxima = get_local_maxima(dog_images, SIGMAS, threshold)
+
+        if len(blob_params) == 0:
+            return None
+
         if prune:
             with GPUTimer("prune blobs"):
                 blobs = prune_blobs(
@@ -202,38 +206,54 @@ def single_gpu(
             cp.asarray(SIGMAS[:-1])[cp.newaxis, cp.newaxis, :].T
         )
     with GPUTimer("local maxima"):
-        blobs, local_maxima = get_local_maxima(dog_images, SIGMAS, threshold)
+        blob_params, local_maxima = get_local_maxima(dog_images, SIGMAS, threshold)
+
+    if len(blob_params) == 0:
+        return None
+
     if prune:
         with GPUTimer("prune blobs"):
-            blobs = prune_blobs(
-                blobs_array=blobs,
+            blob_params = prune_blobs(
+                blobs_array=blob_params,
                 overlap=overlap_prune,
                 local_maxima=local_maxima.get(),
                 sigma_dim=1,
             )
-        blobs[:, 2] = blobs[:, 2] * math.sqrt(2)
-    return blobs
+        blob_params[:, 2] = blob_params[:, 2] * math.sqrt(2)
+    return blob_params
 
 
 def main():
     # minus one is since we had one more inside routine but we want total to be divisible by size
     n_sigma_bins = math.ceil(29 / size) * size - 1
-    max_sigma = 30
+    resize = (1024, 1024)
+    max_sigma = (resize[0] // 1024) * 30
     focus, n_blobs = [], []
-
     for img_fp in glob(
         "/home/max/dev_projects/mouse_brain_data/**/*.tif", recursive=True
     ):
+        if rank == 0:
+            print("\n\n")
         with GPUTimer("whole thing"):
             section_name = os.path.split(os.path.split(img_fp)[0])[1]
-            print(
-                f"\n{section_name} n_sigma_bins: {n_sigma_bins} max_sigma: {max_sigma}\n"
-            )
+            # if rank == 0:
+            #     with GPUTimer("img load"):
+            #         img = load_img_to_gpu(img_fp, resize)
+            #     with GPUTimer("stretch"):
+            #         img = stretch_composite_histogram(img)
+            # else:
+            #     img = cp.empty(resize, dtype=cp.float32)
+            #
+            # with GPUTimer("broadcast img"):
+            #     comm.Bcast(img, root=0)
+
             with GPUTimer("img load"):
-                img = load_img_to_gpu(img_fp)
+                img = load_img_to_gpu(img_fp, resize)
             with GPUTimer("stretch"):
                 img = stretch_composite_histogram(img)
+
             # make_fig_square(img.get()).show()
+
             with GPUTimer("run gpu"):
                 if size > 1:
                     blobs = multi_gpu(
@@ -243,19 +263,22 @@ def main():
                     blobs = single_gpu(
                         img, n_sigma_bins=n_sigma_bins, max_sigma=max_sigma, prune=False
                     )
-            if blobs is not None:
-                foc, _ = read_tiff_metadata(img_fp)
-                n_blobs.append(len(blobs))
-                focus.append(foc)
-                print(f"{img_fp}, {len(blobs)}, {foc}")
+            if rank == 0:
+                if blobs is not None:
+                    foc, _ = read_tiff_metadata(img_fp)
+                    n_blobs.append(len(blobs))
+                    focus.append(foc)
+                    print(f"{section_name}, {img.shape}, {len(blobs)}, {foc}")
+                else:
+                    print(f"no blobs {section_name}")
 
-        if rank == 0:
-            make_fig_square(
-                img.get(),
-                blobs,
-            ).show()
-
-    plot_focus_res(pd.DataFrame({"blobs": n_blobs, "focus": focus}))
+    #     if rank == 0:
+    #         make_fig_square(
+    #             img.get(),
+    #             blobs,
+    #         ).show()
+    #
+    # plot_focus_res(pd.DataFrame({"blobs": n_blobs, "focus": focus}))
 
 
 if __name__ == "__main__":

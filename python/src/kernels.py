@@ -142,21 +142,20 @@ def max_pool_nd(
 
 # TODO(max): convert back to cupy so i can time correctly
 def get_local_maxima(dog_images, sigmas, threshold):
-    with GPUTimer("argmax"):
-        idx = dog_images.argmax(axis=0)
-        m, n = dog_images.shape[1:]
-        I, J = cp.ogrid[:m, :n]
-        max_values = dog_images[idx, I, J]
-        max_values[max_values < threshold] = 0.0
-        local_maxima = max_pool_nd(max_values, size=(3, 3), stride=(1, 1))
-        mask = (local_maxima == max_values) & (
-            max_values > cp.float32(0.0)
-        )
-        local_maxima = local_maxima[mask]
-        coords = idx[mask]
-        blobs = cp.asarray(
-            (*mask.nonzero(), cp.asarray(sigmas)[coords])
-        ).T
+    idx = dog_images.argmax(axis=0)
+    m, n = dog_images.shape[1:]
+    I, J = cp.ogrid[:m, :n]
+    max_values = dog_images[idx, I, J]
+    max_values[max_values < threshold] = 0.0
+
+    if not max_values.any():
+        return [], []
+
+    local_maxima = max_pool_nd(max_values, size=(3, 3), stride=(1, 1))
+    mask = (local_maxima == max_values) & (max_values > cp.float32(0.0))
+    local_maxima = local_maxima[mask]
+    coords = idx[mask]
+    blobs = cp.asarray((*mask.nonzero(), cp.asarray(sigmas)[coords])).T
     return blobs, local_maxima
 
 
