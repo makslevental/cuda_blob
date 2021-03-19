@@ -2,6 +2,7 @@ import math
 import os
 import time
 from glob import glob
+import argparse
 
 import cupy as cp
 import numpy as np
@@ -34,6 +35,8 @@ from util import (
 )
 
 
+# TODO(max): scatter the sigmas not the whole kernels (save the data back and forth
+# can overlap image processing and kernel creation
 def scatter_kernel(img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate):
     if rank == 0:
         sigmas = get_sigmas(img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate)
@@ -224,28 +227,36 @@ def single_gpu(
 
 
 def main():
-    # minus one is since we had one more inside routine but we want total to be divisible by size
-    n_sigma_bins = math.ceil(29 / size) * size - 1
-    resize = (1024, 1024)
-    max_sigma = (resize[0] // 1024) * 30
+    parser = argparse.ArgumentParser(description="Process some integers.")
+    parser.add_argument(
+        "n_sigma_bins",
+        type=int,
+    )
+    parser.add_argument(
+        "resize",
+        type=int,
+    )
+    parser.add_argument(
+        "max_sigma",
+        type=int,
+    )
+    args = parser.parse_args()
+
+    # minus one is since we add one more inside routine but we want total to be divisible by size
+    n_sigma_bins = math.ceil(args.n_sigma_bins / size) * size - 1
+    # resize = (1024, 1024)
+    resize = (args.resize, args.resize)
+    # max_sigma = (resize[0] // 1024) * 30
+    max_sigma = args.max_sigma
+
     focus, n_blobs = [], []
     for img_fp in glob(
-        "/home/max/dev_projects/mouse_brain_data/**/*.tif", recursive=True
+        "/home/max/dev_projects/mouse_brain_data/focus_series/**/*.tif", recursive=True
     ):
         if rank == 0:
             print("\n\n")
         with GPUTimer("whole thing"):
             section_name = os.path.split(os.path.split(img_fp)[0])[1]
-            # if rank == 0:
-            #     with GPUTimer("img load"):
-            #         img = load_img_to_gpu(img_fp, resize)
-            #     with GPUTimer("stretch"):
-            #         img = stretch_composite_histogram(img)
-            # else:
-            #     img = cp.empty(resize, dtype=cp.float32)
-            #
-            # with GPUTimer("broadcast img"):
-            #     comm.Bcast(img, root=0)
 
             with GPUTimer("img load"):
                 img = load_img_to_gpu(img_fp, resize)
@@ -271,12 +282,12 @@ def main():
                     print(f"{section_name}, {img.shape}, {len(blobs)}, {foc}")
                 else:
                     print(f"no blobs {section_name}")
-
-    #     if rank == 0:
-    #         make_fig_square(
-    #             img.get(),
-    #             blobs,
-    #         ).show()
+        break
+        # if rank == 0:
+        #     make_fig_square(
+        #         img.get(),
+        #         blobs,
+        #     ).show()
     #
     # plot_focus_res(pd.DataFrame({"blobs": n_blobs, "focus": focus}))
 
