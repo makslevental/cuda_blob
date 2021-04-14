@@ -18,6 +18,11 @@ rank = comm.Get_rank()
 
 _cudart = ctypes.CDLL("libcudart.so")
 
+N_SIGMA_BINS = 0
+RESIZE = 0
+MAX_SIGMA = 0
+DIR = "/tmp"
+N_GPUS = size
 
 def cuda_profiler_start():
     # As shown at http://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__PROFILER.html,
@@ -35,11 +40,11 @@ def cuda_profiler_stop():
 
 
 class GPUTimer:
-    def __init__(self, msg: str, out=stdout):
+    def __init__(self, msg: str):
         self._msg = msg
         self._start = eventCreate()
         self._stop = eventCreate()
-        self._out = out
+        self._out = open(f"{DIR}/{N_GPUS}_{N_SIGMA_BINS}_{RESIZE}_{MAX_SIGMA}.log", "w")
 
     def start(self):
         eventRecord(self._start, 0)
@@ -65,7 +70,7 @@ class MPITimer:
     def __init__(self, msg: str, out=stdout):
         self._msg = msg
         self._start = None
-        self._out = out
+        self._out = open(f"{DIR}/{N_GPUS}_{N_SIGMA_BINS}_{RESIZE}_{MAX_SIGMA}.log", "w")
 
     def start(self):
         self._start = MPI.Wtime()
@@ -81,7 +86,7 @@ class MPITimer:
 
     def __exit__(self, type, value, traceback):
         self.stop()
-        print(f"MPI {self._msg} time {self.elapsed_time():.3f}ms", file=self._out)
+        print(f"MPI {self._msg} time {self.elapsed_time()*1000:.3f}ms", file=self._out)
 
 
 def get_used_cuda_mem(device):

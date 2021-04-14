@@ -6,17 +6,33 @@ dependencies:
   - _libgcc_mutex=0.1=conda_forge
   - _openmp_mutex=4.5=1_gnu
   - _sysroot_linux-64_curr_repodata_hack=3=ha9d2b57_10
+  - appdirs=1.4.4=pyh9f0ad1d_0
   - binutils=2.35.1=hdd6e379_1
   - binutils_impl_linux-64=2.35.1=h193b22a_1
   - binutils_linux-64=2.35=hc3fd857_29
+  - blosc=1.21.0=h9c3ff4c_0
+  - brotli=1.0.9=h9c3ff4c_4
+  - brotlipy=0.7.0=py38h497a2fe_1001
+  - brunsli=0.1=h9c3ff4c_0
+  - bzip2=1.0.8=h7f98852_4
   - c-compiler=1.1.3=h7f98852_0
   - ca-certificates=2020.12.5=ha878542_0
-  - certifi=2020.12.5=py38h578d9bd_0
+  - certifi=2020.12.5=py38h578d9bd_1
+  - cffi=1.14.4=py38ha65f79e_1
+  - chardet=4.0.0=py38h578d9bd_1
+  - charls=2.2.0=h9c3ff4c_0
+  - cloudpickle=1.6.0=py_0
   - compilers=1.1.3=ha770c72_0
+  - cryptography=3.3.1=py38h2b97feb_1
   - cudatoolkit=11.0.3=h15472ef_6
   - cudnn=8.0.5.39=ha5ca753_1
   - cupy=8.3.0=py38h7791b4c_0
   - cxx-compiler=1.1.3=h4bd325d_0
+  - cycler=0.10.0=py_2
+  - cython=0.29.21=py38h709712a_2
+  - cytoolz=0.11.0=py38h25fe258_1
+  - dask-core=2021.1.0=pyhd8ed1ab_0
+  - decorator=4.4.2=py_0
   - fastrlock=0.5=py38h950e882_1
   - fortran-compiler=1.1.3=h1990efc_0
   - freetype=2.10.4=h7ca028e_0
@@ -24,14 +40,23 @@ dependencies:
   - gcc_linux-64=9.3.0=h7247604_29
   - gfortran_impl_linux-64=9.3.0=h2bb4189_17
   - gfortran_linux-64=9.3.0=ha1c937c_29
+  - giflib=5.2.1=h36c2ea0_2
   - gxx_impl_linux-64=9.3.0=h53cdd4c_17
   - gxx_linux-64=9.3.0=h0d07fa4_29
+  - idna=2.10=pyh9f0ad1d_0
+  - imagecodecs=2021.1.11=py38hc09af0b_0
+  - imageio=2.9.0=py_0
   - jpeg=9d=h36c2ea0_0
+  - jxrlib=1.1=h7f98852_2
   - kernel-headers_linux-64=3.10.0=h77966d4_10
+  - kiwisolver=1.3.1=py38h1fd1430_1
   - lcms2=2.11=hcbb858e_1
   - ld_impl_linux-64=2.35.1=hea4e1c9_1
+  - lerc=2.2.1=h9c3ff4c_0
+  - libaec=1.0.4=h9c3ff4c_1
   - libblas=3.9.0=4_openblas
   - libcblas=3.9.0=4_openblas
+  - libdeflate=1.7=h7f98852_5
   - libffi=3.3=h58526e2_2
   - libgcc-devel_linux-64=9.3.0=hfd08b2a_17
   - libgcc-ng=9.3.0=h5dbcf3e_17
@@ -46,34 +71,84 @@ dependencies:
   - libstdcxx-ng=9.3.0=h2ae2ef3_17
   - libtiff=4.2.0=hdc55705_0
   - libwebp-base=1.1.0=h36c2ea0_3
+  - libzopfli=1.0.3=h9c3ff4c_0
   - llvm-openmp=8.0.1=hc9558a2_0
   - llvmlite=0.35.0=py38h4630a5e_0
   - lz4-c=1.9.2=he1b5a44_3
+  - matplotlib-base=3.3.3=py38h0efea84_0
   - mpi=1.0=openmpi
   - nccl=2.8.3.1=h96e36e3_0
   - ncurses=6.2=h58526e2_4
+  - networkx=2.5=py_0
   - numba=0.52.0=py38h51da96c_0
   - numpy=1.19.4=py38h18fd61f_2
   - olefile=0.46=pyh9f0ad1d_1
+  - openjpeg=2.4.0=hf7af979_0
   - openmp=8.0.1=0
   - openmpi=4.0.5=h9b22176_4
   - openmpi-mpicc=4.0.5=h7f98852_4
   - openssl=1.1.1i=h7f98852_0
+  - packaging=20.8=pyhd3deb0d_0
   - pillow=8.0.1=py38h70fbd49_0
-  - pip=20.3.3=pyhd8ed1ab_0
+  - pooch=1.3.0=pyhd8ed1ab_0
+  - pycparser=2.20=pyh9f0ad1d_2
+  - pyopenssl=20.0.1=pyhd8ed1ab_0
+  - pyparsing=2.4.7=pyh9f0ad1d_0
+  - pysocks=1.7.1=py38h578d9bd_3
   - python=3.8.5=h7579374_1
+  - python-dateutil=2.8.1=py_0
   - python_abi=3.8=1_cp38
+  - pywavelets=1.1.1=py38h5c078b8_3
   - readline=8.0=he28a2e2_2
-  - setuptools=49.6.0=py38h924ce5b_2
+  - requests=2.25.1=pyhd3deb0d_0
+  - scikit-image=0.18.1=py38h51da96c_0
+  - scipy=1.6.0=py38hb2138dd_0
   - six=1.15.0=pyh9f0ad1d_0
+  - snappy=1.1.8=he1b5a44_3
   - sqlite=3.34.0=h74cdb3f_0
   - sysroot_linux-64=2.17=h77966d4_10
+  - tifffile=2021.1.14=pyhd8ed1ab_0
   - tk=8.6.10=h21135ba_1
+  - toolz=0.11.1=py_0
+  - tornado=6.1=py38h497a2fe_1
+  - urllib3=1.26.2=pyhd8ed1ab_0
   - wheel=0.36.2=pyhd3deb0d_0
   - xz=5.2.5=h516909a_1
+  - yaml=0.2.5=h516909a_0
+  - zfp=0.5.5=h9c3ff4c_4
   - zlib=1.2.11=h516909a_1010
   - zstd=1.4.8=hdf46e1d_0
   - pip:
+    - alembic==1.4.3
+    - attrs==20.3.0
+    - cliff==3.5.0
+    - cmaes==0.7.0
+    - cmd2==1.4.0
+    - colorama==0.4.4
+    - colorlog==4.6.2
+    - filelock==3.0.12
+    - joblib==1.0.0
+    - mako==1.1.3
+    - markupsafe==1.1.1
     - mpi4py==3.1.0a0
+    - nvidia-dali-cuda110==0.30.0
+    - optuna==2.3.0
+    - pandas==1.2.2
+    - pbr==5.5.1
+    - pip==21.0.1
+    - prettytable==0.7.2
+    - protobuf==3.14.0
     - py3nvml==0.2.6
+    - pydevd-pycharm==203.6682.179
+    - pyperclip==1.8.1
+    - python-editor==1.0.4
+    - pytz==2021.1
+    - pyyaml==5.3.1
+    - setuptools==53.1.0
+    - sqlalchemy==1.3.22
+    - stevedore==3.3.0
+    - tikzplotlib==0.9.8
+    - tqdm==4.55.0
+    - typing-extensions==3.7.4.3
+    - wcwidth==0.2.5
     - xmltodict==0.12.0

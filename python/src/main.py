@@ -1,18 +1,16 @@
+import argparse
 import math
 import os
-import time
 from glob import glob
-import argparse
 
 import cupy as cp
 import numpy as np
-import pandas as pd
 from cupy.cuda.cufft import CUFFT_FORWARD
 from cupyx.scipy.fftpack import get_fft_plan
 from mpi4py import MPI
 
-from src.profiling import GPUTimer
-from src.plots import plot_focus_res
+from src import profiling
+from src.profiling import GPUTimer, MPITimer
 
 comm = MPI.COMM_WORLD
 size = comm.Get_size()
@@ -29,8 +27,6 @@ from util import (
     prune_blobs,
     stretch_composite_histogram,
     get_sigmas,
-    make_fig_square,
-    gpu_resize,
     read_tiff_metadata,
 )
 
@@ -63,14 +59,14 @@ SIGMAS = None
 
 
 def multi_gpu(
-    img: cp.ndarray,
-    min_sigma: int = 1,
-    max_sigma: int = 10,
-    n_sigma_bins: int = 10,
-    truncate: float = 4.0,
-    threshold: float = 0.0001,
-    prune: bool = True,
-    overlap: float = 0.5,
+        img: cp.ndarray,
+        min_sigma: int = 1,
+        max_sigma: int = 10,
+        n_sigma_bins: int = 10,
+        truncate: float = 4.0,
+        threshold: float = 0.0001,
+        prune: bool = True,
+        overlap: float = 0.5,
 ):
     global KERNEL, KERNEL_FREQS, IMG_FORWARD_PLAN, KERNEL_FORWARD_PLAN, KERNEL_INVERSE_PLAN, SIGMAS
     # move img to GPU
@@ -79,9 +75,9 @@ def multi_gpu(
 
     with GPUTimer("init"):
         if any(
-            [
-                x is None
-                for x in [
+                [
+                    x is None
+                    for x in [
                     KERNEL,
                     KERNEL_FREQS,
                     IMG_FORWARD_PLAN,
@@ -89,7 +85,7 @@ def multi_gpu(
                     KERNEL_INVERSE_PLAN,
                     SIGMAS,
                 ]
-            ]
+                ]
         ):
             KERNEL, SIGMAS = scatter_kernel(
                 img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate
@@ -100,8 +96,8 @@ def multi_gpu(
                 KERNEL_FREQS, axes=(-2, -1), value_type="C2R"
             )
 
-    comm.Barrier()
     with GPUTimer("img fft"):
+        comm.Barrier()
         img_freqs = get_fft(img, IMG_FORWARD_PLAN)
 
     # assert (
@@ -117,7 +113,7 @@ def multi_gpu(
 
     # gather to root
     recv_filtered_imgs = cp.empty((n_sigma_bins + 1, img_h, img_w), dtype="f")
-    with GPUTimer("gather filtered imgs"):
+    with MPITimer("gather filtered imgs"):
         comm.Gather(filtered_imgs, recv_filtered_imgs, root=0)
 
     # TODO(max): tree based diffs and local_max
@@ -154,14 +150,14 @@ def multi_gpu(
 
 
 def single_gpu(
-    img: cp.ndarray,
-    min_sigma: int = 1,
-    max_sigma: int = 10,
-    n_sigma_bins: int = 10,
-    truncate: float = 4.0,
-    threshold: float = 0.0001,
-    prune: bool = True,
-    overlap_prune: float = 0.5,
+        img: cp.ndarray,
+        min_sigma: int = 1,
+        max_sigma: int = 10,
+        n_sigma_bins: int = 10,
+        truncate: float = 4.0,
+        threshold: float = 0.0001,
+        prune: bool = True,
+        overlap_prune: float = 0.5,
 ):
     global KERNEL, KERNEL_FREQS, IMG_FORWARD_PLAN, KERNEL_FORWARD_PLAN, KERNEL_INVERSE_PLAN, SIGMAS
     # move img to GPU
@@ -169,9 +165,9 @@ def single_gpu(
 
     with GPUTimer("init"):
         if any(
-            [
-                x is None
-                for x in [
+                [
+                    x is None
+                    for x in [
                     KERNEL,
                     KERNEL_FREQS,
                     IMG_FORWARD_PLAN,
@@ -179,7 +175,7 @@ def single_gpu(
                     KERNEL_INVERSE_PLAN,
                     SIGMAS,
                 ]
-            ]
+                ]
         ):
             SIGMAS = get_sigmas(
                 img_h, img_w, min_sigma, max_sigma, n_sigma_bins, truncate
@@ -226,6 +222,10 @@ def single_gpu(
     return blob_params
 
 
+def prof_tests():
+    pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Process some integers.")
     parser.add_argument(
@@ -240,18 +240,23 @@ def main():
         "max_sigma",
         type=int,
     )
+    parser.add_argument(
+        "dir",
+        type=str,
+    )
     args = parser.parse_args()
 
     # minus one is since we add one more inside routine but we want total to be divisible by size
-    n_sigma_bins = math.ceil(args.n_sigma_bins / size) * size - 1
+    profiling.N_SIGMA_BINS = n_sigma_bins = math.ceil(args.n_sigma_bins / size) * size - 1
     # resize = (1024, 1024)
-    resize = (args.resize, args.resize)
+    profiling.RESIZE = resize = (args.resize, args.resize)
     # max_sigma = (resize[0] // 1024) * 30
-    max_sigma = args.max_sigma
+    profiling.MAX_SIGMA = max_sigma = args.max_sigma
+    profiling.DIR = args.dir
 
     focus, n_blobs = [], []
     for img_fp in glob(
-        "/home/max/dev_projects/mouse_brain_data/focus_series/**/*.tif", recursive=True
+            "/home/max/dev_projects/mouse_brain_data/focus_series/**/*.tif", recursive=True
     ):
         if rank == 0:
             print("\n\n")
